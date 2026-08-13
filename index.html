@@ -2,41 +2,28 @@
 <html lang="cs">
 <!--
 ================================================================
-PIVNÍ POČÍTADLO — návod ke zprovoznění (cca 10 minut, vše zdarma,
-kamarádi se NIKAM nepřihlašují, jen otevřou odkaz)
-================================================================
+PIVNÍ POČÍTADLO — kdo kolik vypil, společné pro celou partu.
+Verze s jednoduchým LOGOVÁNÍM (záznam dění: kdo kdy přidal/ubral pivo).
+
+Zprovoznění (vše zdarma, kamarádi se NIKAM nepřihlašují, jen otevřou odkaz):
 
 1) DATABÁZE (Google Firebase, tarif Spark = zdarma):
-   - Otevři https://console.firebase.google.com a založ projekt
-     (jméno libovolné, Google Analytics můžeš vypnout).
-   - V levém menu: Build -> Realtime Database -> Create database
-     -> umístění Belgie (europe-west1) -> Start in locked mode.
-   - Přepni na záložku Rules, vlož toto a dej Publish:
-
-     {
-       "rules": {
-         "pivo": {
-           ".read": true,
-           ".write": true
-         }
+   - console.firebase.google.com -> projekt -> Realtime Database
+     -> umístění Belgie (europe-west1) -> locked mode.
+   - Záložka Rules, vlož a Publish:
+       {
+         "rules": { "pivo": { ".read": true, ".write": true } }
        }
-     }
+     (Log se ukládá pod /pivo/<parta>/_log, takže stejné pravidlo stačí.)
+   - Zkopíruj adresu databáze (končí na firebasedatabase.app).
 
-   - Na záložce Data nahoře zkopíruj adresu databáze, vypadá třeba:
-     https://pivni-pocitadlo-default-rtdb.europe-west1.firebasedatabase.app
+2) Vlož adresu níže do  const DB_URL = "..."
 
-2) Vlož tu adresu níže do řádku  const DB_URL = "..."  (označeno TODO).
+3) ZVEŘEJNĚNÍ (GitHub Pages, zdarma): nahraj tento soubor jako index.html,
+   Settings -> Pages -> Deploy from a branch -> main -> Save.
 
-3) ZVEŘEJNĚNÍ (GitHub Pages, zdarma):
-   - Založ nový veřejný repozitář a nahraj tento soubor pod jménem index.html
-   - Settings -> Pages -> Source: Deploy from a branch -> Branch: main -> Save
-   - Za pár minut stránka poběží na https://tvujucet.github.io/nazev-repozitare/
-
-4) Odkaz pošli partě. Hotovo.
-
-Bezpečnost: pravidla výše otevřou větev /pivo každému, kdo zná adresu
-databáze. Na počítání piv to bohatě stačí — nic citlivého sem nepatří.
-Novou "čistou" párty začneš změnou konstanty PARTA níže.
+Novou "čistou" párty (i s prázdným logem) začneš změnou konstanty PARTA níže.
+Poznámka: log roste s počtem ťuknutí; pro partu je to zanedbatelné.
 ================================================================
 -->
 <head>
@@ -101,6 +88,13 @@ Novou "čistou" párty začneš změnou konstanty PARTA níže.
     .ja{ color:var(--lezak); font-weight:700; }
     .prouzek{ height:7px; border-radius:999px; background:var(--pozadi); margin:5px 0 0 26px; }
     .prouzek > div{ height:7px; border-radius:999px; background:linear-gradient(90deg, var(--lezak-tmavy), var(--lezak)); transition:width .3s; }
+    .den-radek{ display:flex; justify-content:space-between; align-items:center; gap:10px; padding:7px 0; font-size:13px; border-top:1px solid rgba(255,255,255,.06); }
+    .den-radek:first-of-type{ border-top:none; }
+    .den-radek .kdo{ display:flex; align-items:center; gap:7px; min-width:0; }
+    .den-radek .kdo span{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .den-radek .prawo{ white-space:nowrap; }
+    .plus{ color:var(--lezak); font-weight:700; }
+    .minus{ color:var(--cerv); font-weight:700; }
     .chyba{
       background:#31170e; color:var(--cerv); border:1px solid var(--cerv);
       border-radius:14px; padding:8px 12px; font-size:13px; text-align:center; margin-top:12px;
@@ -129,13 +123,15 @@ Novou "čistou" párty začneš změnou konstanty PARTA níže.
 "use strict";
 
 /* ========================= NASTAVENÍ ========================= */
-/* TODO: sem vlož adresu své Realtime Database z Firebase
-   (návod je v komentáři úplně nahoře v tomto souboru)         */
+/* TODO: sem vlož adresu své Realtime Database z Firebase          */
 const DB_URL = "https://pivni-pocitacka-default-rtdb.europe-west1.firebasedatabase.app";
 
-/* Název party — změnou začnete s čistým žebříčkem,
+/* Název party — změnou začnete s čistým žebříčkem i logem,
    např. "chalupa-2026" nebo "istrie-zari"                     */
 const PARTA = "nase-parta";
+
+/* Kolik posledních událostí ukázat v Dění */
+const LOG_ZOBRAZIT = 25;
 /* ============================================================= */
 
 const MEDAILE = ["🥇", "🥈", "🥉"];
@@ -145,11 +141,12 @@ const nastaveno = /^https:\/\//.test(zaklad) && !zaklad.includes("SEM-VLOZ");
 let faze = "start";        // setup | jmeno | hraje
 let jmeno = "";
 let mujPocet = 0;
-let radky = {};            // data ze serveru: { slug: {name, count, updatedAt} }
+let radky = {};            // hráči: { slug: {name, count, updatedAt} }
+let logData = {};          // dění: { pushKey: {name, delta, count, t} }
 let chyba = "";
 let cas = null;
 let obnovuji = false;
-let potvrzeni = false;     // potvrzení smazání
+let potvrzeni = false;
 let ukladam = false, ceka = false;
 
 /* ---------- pomocné funkce ---------- */
@@ -185,7 +182,9 @@ async function nacti(tiche) {
     const r = await fetch(urlPro(""));
     if (!r.ok) throw new Error(r.status);
     const data = await r.json();
-    radky = (data && typeof data === "object") ? data : {};
+    const cely = (data && typeof data === "object") ? data : {};
+    logData = (cely && typeof cely._log === "object" && cely._log) ? cely._log : {};
+    radky = cely;
     if (jmeno && !ukladam && !ceka) {
       const muj = radky[slug(jmeno)];
       if (muj && typeof muj.count === "number") mujPocet = Math.max(0, muj.count);
@@ -219,12 +218,25 @@ async function uloz() {
   else nacti(true);
 }
 
+/* Zápis události do logu (přičtení/ubrání piva). Append přes POST. */
+async function zapisLog(delta) {
+  if (!nastaveno) return;
+  try {
+    await fetch(urlPro("/_log"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: jmeno, delta: delta, count: mujPocet, t: Date.now() })
+    });
+    nacti(true);
+  } catch (e) { /* log není kritický — když se nezapíše, počítadlo jede dál */ }
+}
+
 /* ---------- akce (volané z tlačítek) ---------- */
-function pridej() { mujPocet++; potvrzeni = false; render(); uloz(); }
+function pridej() { mujPocet++; potvrzeni = false; render(); uloz(); zapisLog(1); }
 
 function uber() {
   if (mujPocet <= 0) return;
-  mujPocet--; potvrzeni = false; render(); uloz();
+  mujPocet--; potvrzeni = false; render(); uloz(); zapisLog(-1);
 }
 
 async function prihlas() {
@@ -264,14 +276,16 @@ async function smazMe() {
 
 function obnov() { nacti(false); }
 
-/* ---------- sestavení žebříčku ---------- */
+/* ---------- sestavení žebříčku (klíče začínající "_" jsou služební) ---------- */
 function seznam() {
-  const pole = Object.entries(radky || {}).map(([s, d]) => ({
-    slug: s,
-    name: String((d && d.name) || s),
-    count: Math.max(0, (d && typeof d.count === "number") ? d.count : 0),
-    kdy: (d && d.updatedAt) || null
-  }));
+  const pole = Object.entries(radky || {})
+    .filter(([s]) => s.charAt(0) !== "_")
+    .map(([s, d]) => ({
+      slug: s,
+      name: String((d && d.name) || s),
+      count: Math.max(0, (d && typeof d.count === "number") ? d.count : 0),
+      kdy: (d && d.updatedAt) || null
+    }));
   if (jmeno && faze === "hraje") {
     const s = slug(jmeno);
     const i = pole.findIndex((p) => p.slug === s);
@@ -280,6 +294,14 @@ function seznam() {
   }
   pole.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "cs"));
   return pole;
+}
+
+/* ---------- sestavení dění (nejnovější nahoře) ---------- */
+function deni() {
+  return Object.values(logData || {})
+    .filter((e) => e && typeof e.t === "number")
+    .sort((a, b) => b.t - a.t)
+    .slice(0, LOG_ZOBRAZIT);
 }
 
 /* ---------- vykreslení ---------- */
@@ -337,6 +359,22 @@ function render() {
         "</div>";
       }).join("");
 
+  const udalosti = deni();
+  const denicko = udalosti.length === 0
+    ? '<div class="male kour" style="text-align:center;padding:10px 0;">Zatím žádné dění.</div>'
+    : udalosti.map((e) => {
+        const kladne = (e.delta || 0) >= 0;
+        const ikona = kladne ? "🍺" : "↩︎";
+        const znamenko = kladne
+          ? '<span class="plus">+1</span>'
+          : '<span class="minus">−1</span>';
+        const stav = (typeof e.count === "number") ? " → " + e.count : "";
+        return '<div class="den-radek">' +
+          '<div class="kdo">' + ikona + '<span>' + esc(e.name || "?") + "</span></div>" +
+          '<div class="prawo kour">' + znamenko + stav + " · " + fmtCas(e.t) + "</div>" +
+        "</div>";
+      }).join("");
+
   app.innerHTML = pruhChyby +
     '<div class="karta stred">' +
       '<div class="male kour">Na tácku má</div>' +
@@ -361,9 +399,14 @@ function render() {
       "</div>" + zebricek +
     "</div>" +
 
+    '<div class="karta">' +
+      '<div style="font-weight:700;margin-bottom:6px;">Kdo, kdy, co</div>' +
+      denicko +
+    "</div>" +
+
     '<div class="paticka">' +
       (cas ? "<div>Naposledy obnoveno " + cas.toLocaleTimeString("cs-CZ") + ", obnovuje se každých 15 s.</div>" : "") +
-      '<div style="margin-top:4px;">Žebříček vidí všichni, kdo mají odkaz.</div>' +
+      '<div style="margin-top:4px;">Žebříček i dění vidí všichni, kdo mají odkaz.</div>' +
       '<div style="margin-top:10px;">' +
         '<button onclick="zmenJmeno()">Změnit jméno</button>' +
         "&nbsp;&nbsp;·&nbsp;&nbsp;" +
