@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="cs">
+<!--
+================================================================
+PIVNÍ POČÍTADLO — návod ke zprovoznění (cca 10 minut, vše zdarma,
+kamarádi se NIKAM nepřihlašují, jen otevřou odkaz)
+================================================================
+
+1) DATABÁZE (Google Firebase, tarif Spark = zdarma):
+   - Otevři https://console.firebase.google.com a založ projekt
+     (jméno libovolné, Google Analytics můžeš vypnout).
+   - V levém menu: Build -> Realtime Database -> Create database
+     -> umístění Belgie (europe-west1) -> Start in locked mode.
+   - Přepni na záložku Rules, vlož toto a dej Publish:
+
+     {
+       "rules": {
+         "pivo": {
+           ".read": true,
+           ".write": true
+         }
+       }
+     }
+
+   - Na záložce Data nahoře zkopíruj adresu databáze, vypadá třeba:
+     https://pivni-pocitadlo-default-rtdb.europe-west1.firebasedatabase.app
+
+2) Vlož tu adresu níže do řádku  const DB_URL = "..."  (označeno TODO).
+
+3) ZVEŘEJNĚNÍ (GitHub Pages, zdarma):
+   - Založ nový veřejný repozitář a nahraj tento soubor pod jménem index.html
+   - Settings -> Pages -> Source: Deploy from a branch -> Branch: main -> Save
+   - Za pár minut stránka poběží na https://tvujucet.github.io/nazev-repozitare/
+
+4) Odkaz pošli partě. Hotovo.
+
+Bezpečnost: pravidla výše otevřou větev /pivo každému, kdo zná adresu
+databáze. Na počítání piv to bohatě stačí — nic citlivého sem nepatří.
+Novou "čistou" párty začneš změnou konstanty PARTA níže.
+================================================================
+-->
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pivní počítadlo</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Alfa+Slab+One&family=Archivo:wght@400;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root{
+      --pozadi:#150e07; --pozadi2:#231508; --karta:#241808; --okraj:#3d2d14;
+      --lezak:#f0a71f; --lezak-tmavy:#b97a0c; --mosaz:#6b4a09;
+      --pena:#f7efdc; --kour:#a3906f; --cerv:#d0704e;
+    }
+    *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+    body{
+      margin:0; min-height:100vh; color:var(--pena);
+      font-family:'Archivo',system-ui,sans-serif;
+      background:radial-gradient(900px 520px at 50% -8%, var(--pozadi2), var(--pozadi) 62%);
+      display:flex; justify-content:center; padding:24px 16px;
+    }
+    .obal{ width:100%; max-width:28rem; }
+    .titul{
+      font-family:'Alfa Slab One',serif; font-size:30px; color:var(--lezak);
+      text-align:center; letter-spacing:1px; text-shadow:0 2px 0 rgba(0,0,0,.45);
+    }
+    .podtitul{ color:var(--kour); font-size:13px; text-align:center; margin-top:2px; }
+    .karta{ background:var(--karta); border:1px solid var(--okraj); border-radius:18px; padding:20px; margin-top:14px; }
+    .stred{ display:flex; flex-direction:column; align-items:center; }
+    .kour{ color:var(--kour); }
+    .male{ font-size:13px; }
+    input.pole{
+      width:100%; border-radius:14px; padding:12px 16px; font-size:17px;
+      background:var(--pozadi); border:1px solid var(--okraj); color:var(--pena);
+    }
+    input.pole:focus{ outline:none; border-color:var(--lezak); }
+    button{ font-family:inherit; cursor:pointer; border:none; background:none; color:inherit; }
+    button:active{ transform:scale(.96); }
+    .hlavni{
+      width:100%; margin-top:12px; border-radius:14px; padding:13px; font-weight:700; font-size:17px;
+      color:#241503; background:linear-gradient(180deg, var(--lezak), var(--lezak-tmavy)); border:2px solid var(--mosaz);
+    }
+    .hlavni:disabled{ opacity:.4; }
+    .pipa{
+      width:158px; height:158px; border-radius:999px; margin-top:6px;
+      background:radial-gradient(circle at 32% 26%, #ffd97e, var(--lezak) 46%, var(--lezak-tmavy));
+      border:5px solid var(--mosaz); color:#241503;
+      box-shadow:0 12px 26px rgba(0,0,0,.55), inset 0 -10px 18px rgba(0,0,0,.28), inset 0 6px 10px rgba(255,255,255,.25);
+      display:flex; flex-direction:column; align-items:center; justify-content:center; user-select:none;
+    }
+    .pipa .emoji{ font-size:42px; line-height:1; }
+    .pipa .napis{ font-family:'Alfa Slab One',serif; font-size:24px; margin-top:2px; }
+    .cislo{ font-family:'Alfa Slab One',serif; font-size:56px; line-height:1.1; }
+    .oprava{ margin-top:14px; border:1px solid var(--okraj); color:var(--kour); border-radius:999px; padding:8px 16px; font-size:13px; }
+    .oprava:disabled{ opacity:.3; }
+    .radek-souhrn{ display:flex; justify-content:space-between; align-items:center; padding:12px 20px; }
+    .obnov{ border:1px solid var(--okraj); color:var(--kour); border-radius:999px; padding:5px 12px; font-size:12px; }
+    .zaznam{ margin-bottom:12px; }
+    .zaznam .horni{ display:flex; justify-content:space-between; align-items:center; gap:8px; }
+    .zaznam .jm{ display:flex; align-items:center; gap:8px; min-width:0; }
+    .zaznam .jmeno-text{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .ja{ color:var(--lezak); font-weight:700; }
+    .prouzek{ height:7px; border-radius:999px; background:var(--pozadi); margin:5px 0 0 26px; }
+    .prouzek > div{ height:7px; border-radius:999px; background:linear-gradient(90deg, var(--lezak-tmavy), var(--lezak)); transition:width .3s; }
+    .chyba{
+      background:#31170e; color:var(--cerv); border:1px solid var(--cerv);
+      border-radius:14px; padding:8px 12px; font-size:13px; text-align:center; margin-top:12px;
+    }
+    .paticka{ color:var(--kour); font-size:12px; text-align:center; margin-top:16px; }
+    .paticka button{ text-decoration:underline; color:var(--kour); font-size:12px; }
+    .paticka .ano{ color:var(--cerv); font-weight:700; text-decoration:none; }
+    .paticka .ne{ color:var(--kour); font-weight:700; text-decoration:none; }
+    code{ background:var(--pozadi); padding:1px 5px; border-radius:6px; font-size:12px; word-break:break-all; }
+    ol{ padding-left:20px; margin:8px 0; }
+    li{ margin-bottom:8px; }
+    @media (prefers-reduced-motion: reduce){
+      *{ transition:none !important; }
+      button:active{ transform:none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="obal">
+    <div class="titul">PIVNÍ POČÍTADLO</div>
+    <div class="podtitul">kdo kolik vypil — společné pro celou partu</div>
+    <div id="app"></div>
+  </div>
+
+<script>
+"use strict";
+
+/* ========================= NASTAVENÍ ========================= */
+/* TODO: sem vlož adresu své Realtime Database z Firebase
+   (návod je v komentáři úplně nahoře v tomto souboru)         */
+const DB_URL = "https://pivni-pocitacka-default-rtdb.europe-west1.firebasedatabase.app";
+
+/* Název party — změnou začnete s čistým žebříčkem,
+   např. "chalupa-2026" nebo "istrie-zari"                     */
+const PARTA = "nase-parta";
+/* ============================================================= */
+
+const MEDAILE = ["🥇", "🥈", "🥉"];
+const zaklad = String(DB_URL).replace(/\/+$/, "");
+const nastaveno = /^https:\/\//.test(zaklad) && !zaklad.includes("SEM-VLOZ");
+
+let faze = "start";        // setup | jmeno | hraje
+let jmeno = "";
+let mujPocet = 0;
+let radky = {};            // data ze serveru: { slug: {name, count, updatedAt} }
+let chyba = "";
+let cas = null;
+let obnovuji = false;
+let potvrzeni = false;     // potvrzení smazání
+let ukladam = false, ceka = false;
+
+/* ---------- pomocné funkce ---------- */
+const slug = (s) => (s || "").toLowerCase().normalize("NFD")
+  .replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "_")
+  .replace(/^_+|_+$/g, "") || "anonym";
+
+const sklonuj = (n) => (n === 1 ? "pivo" : n >= 2 && n <= 4 ? "piva" : "piv");
+
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+const fmtCas = (t) => {
+  try { return new Date(t).toLocaleTimeString("cs-CZ", { hour: "2-digit", minute: "2-digit" }); }
+  catch (e) { return ""; }
+};
+
+const urlPro = (cesta) => zaklad + "/pivo/" + PARTA + cesta + ".json";
+
+function jmenoLokalne(n) {
+  try {
+    if (n === null) localStorage.removeItem("pivo_jmeno");
+    else if (n !== undefined) localStorage.setItem("pivo_jmeno", n);
+    return localStorage.getItem("pivo_jmeno") || "";
+  } catch (e) { return ""; }
+}
+
+/* ---------- komunikace s databází ---------- */
+async function nacti(tiche) {
+  if (!nastaveno) return;
+  if (!tiche) { obnovuji = true; render(); }
+  try {
+    const r = await fetch(urlPro(""));
+    if (!r.ok) throw new Error(r.status);
+    const data = await r.json();
+    radky = (data && typeof data === "object") ? data : {};
+    if (jmeno && !ukladam && !ceka) {
+      const muj = radky[slug(jmeno)];
+      if (muj && typeof muj.count === "number") mujPocet = Math.max(0, muj.count);
+    }
+    cas = new Date();
+    chyba = "";
+  } catch (e) {
+    chyba = "Nejde načíst data — zkontroluj adresu databáze a připojení.";
+  }
+  obnovuji = false;
+  if (faze === "hraje") render();
+}
+
+async function uloz() {
+  if (ukladam) { ceka = true; return; }
+  ukladam = true;
+  try {
+    const r = await fetch(urlPro("/" + slug(jmeno)), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: jmeno, count: mujPocet, updatedAt: Date.now() })
+    });
+    if (!r.ok) throw new Error(r.status);
+    chyba = "";
+  } catch (e) {
+    chyba = "Uložení se nepovedlo — zkus to za chvíli.";
+    if (faze === "hraje") render();
+  }
+  ukladam = false;
+  if (ceka) { ceka = false; uloz(); }
+  else nacti(true);
+}
+
+/* ---------- akce (volané z tlačítek) ---------- */
+function pridej() { mujPocet++; potvrzeni = false; render(); uloz(); }
+
+function uber() {
+  if (mujPocet <= 0) return;
+  mujPocet--; potvrzeni = false; render(); uloz();
+}
+
+async function prihlas() {
+  const el = document.getElementById("vstup");
+  const n = ((el && el.value) || "").trim().slice(0, 24);
+  if (!n) return;
+  jmeno = n;
+  jmenoLokalne(n);
+  faze = "hraje";
+  mujPocet = 0;
+  render();
+  try {
+    const r = await fetch(urlPro("/" + slug(n)));
+    if (r.ok) {
+      const d = await r.json();
+      if (d && typeof d.count === "number") mujPocet = Math.max(0, d.count);
+    }
+  } catch (e) { /* nový piják */ }
+  if (mujPocet === 0) uloz(); else render();
+  nacti(true);
+}
+
+function zmenJmeno() {
+  jmenoLokalne(null);
+  jmeno = ""; potvrzeni = false; faze = "jmeno";
+  render();
+}
+
+function chciSmazat() { potvrzeni = true; render(); }
+function nesmazat() { potvrzeni = false; render(); }
+
+async function smazMe() {
+  potvrzeni = false; mujPocet = 0; render();
+  try { await fetch(urlPro("/" + slug(jmeno)), { method: "DELETE" }); } catch (e) {}
+  nacti(true);
+}
+
+function obnov() { nacti(false); }
+
+/* ---------- sestavení žebříčku ---------- */
+function seznam() {
+  const pole = Object.entries(radky || {}).map(([s, d]) => ({
+    slug: s,
+    name: String((d && d.name) || s),
+    count: Math.max(0, (d && typeof d.count === "number") ? d.count : 0),
+    kdy: (d && d.updatedAt) || null
+  }));
+  if (jmeno && faze === "hraje") {
+    const s = slug(jmeno);
+    const i = pole.findIndex((p) => p.slug === s);
+    if (i >= 0) { pole[i].name = jmeno; pole[i].count = mujPocet; }
+    else pole.push({ slug: s, name: jmeno, count: mujPocet, kdy: null });
+  }
+  pole.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "cs"));
+  return pole;
+}
+
+/* ---------- vykreslení ---------- */
+function render() {
+  const app = document.getElementById("app");
+  const pruhChyby = chyba ? '<div class="chyba">' + esc(chyba) + "</div>" : "";
+
+  if (faze === "setup") {
+    app.innerHTML = pruhChyby +
+      '<div class="karta">' +
+        '<div style="font-weight:700;font-size:18px;margin-bottom:6px;">Ještě jedno nastavení 🔧</div>' +
+        '<div class="male kour">Aplikace potřebuje adresu databáze. Úplný návod je v komentáři na začátku tohoto souboru, ve zkratce:</div>' +
+        '<ol class="male">' +
+          '<li>Na <code>console.firebase.google.com</code> založ projekt a v něm <b>Realtime Database</b> (umístění Belgie).</li>' +
+          '<li>Do záložky <b>Rules</b> vlož <code>{"rules":{"pivo":{".read":true,".write":true}}}</code> a publikuj.</li>' +
+          '<li>Zkopíruj adresu databáze (končí na <code>firebasedatabase.app</code>) a vlož ji v tomto souboru do řádku <code>const DB_URL = "..."</code>.</li>' +
+        "</ol>" +
+      "</div>";
+    return;
+  }
+
+  if (faze === "jmeno") {
+    app.innerHTML = pruhChyby +
+      '<div class="karta">' +
+        '<div style="font-weight:700;font-size:18px;margin-bottom:4px;">Jak ti říkají?</div>' +
+        '<div class="male kour" style="margin-bottom:14px;">Jméno tě zapíše na společný žebříček. Piš stejné jméno pokaždé, jinak si založíš nový účet.</div>' +
+        '<input id="vstup" class="pole" maxlength="24" placeholder="např. Franta" onkeydown="if(event.key===\'Enter\')prihlas()" />' +
+        '<button class="hlavni" onclick="prihlas()">Jdu pít 🍺</button>' +
+      "</div>";
+    const el = document.getElementById("vstup");
+    if (el) el.focus();
+    return;
+  }
+
+  /* faze === "hraje" */
+  const pole = seznam();
+  const celkem = pole.reduce((s, r) => s + r.count, 0);
+  const max = Math.max(1, ...pole.map((p) => p.count));
+  const mujSlug = slug(jmeno);
+
+  const zebricek = pole.length === 0
+    ? '<div class="male kour" style="text-align:center;padding:14px 0;">Zatím nikdo nepije. Buď první! 🍺</div>'
+    : pole.map((r, i) => {
+        const ja = r.slug === mujSlug;
+        const znak = (i < 3 && r.count > 0) ? MEDAILE[i] : (i + 1) + ".";
+        const kdy = (r.kdy && r.count > 0)
+          ? '<span class="male kour">' + fmtCas(r.kdy) + "</span>" : "";
+        return '<div class="zaznam">' +
+          '<div class="horni">' +
+            '<div class="jm"><span style="width:26px;display:inline-block;">' + znak + "</span>" +
+            '<span class="jmeno-text' + (ja ? " ja" : "") + '">' + esc(r.name) + (ja ? " (já)" : "") + "</span>" + kdy + "</div>" +
+            '<div style="font-weight:700;">' + r.count + "</div>" +
+          "</div>" +
+          '<div class="prouzek"><div style="width:' + (r.count / max * 100) + '%;"></div></div>' +
+        "</div>";
+      }).join("");
+
+  app.innerHTML = pruhChyby +
+    '<div class="karta stred">' +
+      '<div class="male kour">Na tácku má</div>' +
+      '<div style="font-weight:700;font-size:19px;">' + esc(jmeno) + "</div>" +
+      '<div class="cislo">' + mujPocet + "</div>" +
+      '<div class="male kour" style="margin:-4px 0 16px;">' + sklonuj(mujPocet) + "</div>" +
+      '<button class="pipa" onclick="pridej()"><span class="emoji">🍺</span><span class="napis">+1 PIVO</span></button>' +
+      '<button class="oprava" onclick="uber()"' + (mujPocet <= 0 ? " disabled" : "") + ">&minus; 1 (překlep)</button>" +
+    "</div>" +
+
+    '<div class="karta radek-souhrn" style="padding-top:12px;padding-bottom:12px;">' +
+      '<div><div class="male kour" style="font-size:11px;">Parta celkem</div>' +
+      '<div style="font-weight:700;font-size:18px;">' + celkem + " " + sklonuj(celkem) + "</div></div>" +
+      '<div style="text-align:right;"><div class="male kour" style="font-size:11px;">po půllitrech</div>' +
+      '<div style="font-weight:700;font-size:18px;color:var(--lezak);">' + (celkem * 0.5).toLocaleString("cs-CZ") + " l</div></div>" +
+    "</div>" +
+
+    '<div class="karta">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">' +
+        '<div style="font-weight:700;">Žebříček</div>' +
+        '<button class="obnov" onclick="obnov()">' + (obnovuji ? "Obnovuji…" : "Obnovit") + "</button>" +
+      "</div>" + zebricek +
+    "</div>" +
+
+    '<div class="paticka">' +
+      (cas ? "<div>Naposledy obnoveno " + cas.toLocaleTimeString("cs-CZ") + ", obnovuje se každých 15 s.</div>" : "") +
+      '<div style="margin-top:4px;">Žebříček vidí všichni, kdo mají odkaz.</div>' +
+      '<div style="margin-top:10px;">' +
+        '<button onclick="zmenJmeno()">Změnit jméno</button>' +
+        "&nbsp;&nbsp;·&nbsp;&nbsp;" +
+        (potvrzeni
+          ? 'Opravdu smazat? <button class="ano" onclick="smazMe()">Ano</button> / <button class="ne" onclick="nesmazat()">Ne</button>'
+          : '<button onclick="chciSmazat()">Smazat mě ze žebříčku</button>') +
+      "</div>" +
+      '<div style="margin-top:10px;opacity:.7;">Pijte s rozumem. 🍻</div>' +
+    "</div>";
+}
+
+/* ---------- start a samočinná obnova ---------- */
+(function start() {
+  if (!nastaveno) { faze = "setup"; render(); return; }
+  jmeno = jmenoLokalne();
+  faze = jmeno ? "hraje" : "jmeno";
+  render();
+  nacti(true);
+})();
+
+setInterval(() => { if (faze === "hraje") nacti(true); }, 15000);
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && faze === "hraje") nacti(true);
+});
+</script>
+</body>
+</html>
