@@ -2,41 +2,46 @@
 <html lang="cs">
 <!--
 ================================================================
-PIVNÍ POČÍTADLO — ADMIN
+PIVNÍ POČÍTADLO — ADMIN (model s aktivní akcí)
 
-Co umí:
-  • přihlášení přes Google účet (první admin: gabr.kova@gmail.com),
-  • archivovat aktuální akci a začít evidenci nanovo,
-  • prohlížet staré (archivované) akce — jen čtení,
-  • export žebříčku (kdo kolik) do CSV, u aktivní i archivované akce.
+Model dat:
+  /pivo/aktivni        -> id aktivní akce (řetězec)
+  /pivo/akce/<id>      -> { nazev, zalozeno, hraci:{slug:{name,count,updatedAt}}, _log:{...} }
+  (staré uzly /pivo/nase-parta a /pivo/archiv zůstávají jen ke čtení kvůli importu)
 
-NASTAVENÍ (jednorázově, ve Firebase konzoli projektu pivni-pocitacka):
+Admin umí:
+  • přihlášení Googlem (první admin: gabr.kova@gmail.com),
+  • založit novou akci s názvem a nastavit ji jako aktuální,
+  • přepnout aktuální akci na kteroukoli dřívější (návrat k předchozí akci),
+  • přejmenovat akci, zobrazit (jen čtení) a exportovat CSV,
+  • jednorázově importovat dosavadní data (aktuální tabuli + archiv) do nového modelu.
 
-1) Authentication -> Sign-in method -> zapni poskytovatele „Google".
-2) Authentication -> Settings -> Authorized domains -> přidej
-   „gabrkova.github.io" (aby fungovalo přihlášení z GitHub Pages).
-3) Project settings -> General -> Your apps -> Add app -> Web (</>),
-   zaregistruj (název třeba „pivni-admin") a zkopíruj celý objekt
-   firebaseConfig. Vlož ho níže místo bloku SEM_VLOZ.
-4) Realtime Database -> Rules -> nahraď pravidla těmito a Publish:
+NASTAVENÍ (Firebase konzole, projekt pivni-pocitacka):
+  1) Authentication -> Sign-in method -> Google (zapnout).
+  2) Authentication -> Settings -> Authorized domains -> gabrkova.github.io.
+  3) firebaseConfig už je vložen níže.
+  4) Realtime Database -> Rules -> nahraď těmito a Publish:
 
-   {
-     "rules": {
-       "pivo": {
-         "nase-parta": { ".read": true, ".write": true },
-         "archiv": {
-           ".read": true,
-           ".write": "auth != null && auth.token.email_verified == true && auth.token.email == 'gabr.kova@gmail.com'"
-         }
-       }
-     }
-   }
-
-   (Aktivní tabule zůstává veřejná; do archivu smí zapisovat jen admin.
-    Dalšího admina přidáš rozšířením podmínky .write o další e-mail.)
-
-5) Nahraj tento soubor jako admin.html do repozitáře gabrkova/PivniApka.
-   Admin poběží na https://gabrkova.github.io/PivniApka/admin.html
+  {
+    "rules": {
+      "pivo": {
+        "aktivni": {
+          ".read": true,
+          ".write": "auth != null && auth.token.email_verified == true && auth.token.email == 'gabr.kova@gmail.com'"
+        },
+        "akce": {
+          ".read": true,
+          "$id": {
+            ".write": "auth != null && auth.token.email_verified == true && auth.token.email == 'gabr.kova@gmail.com'",
+            "hraci": { ".write": "$id === root.child('pivo/aktivni').val()" },
+            "_log":  { ".write": "$id === root.child('pivo/aktivni').val()" }
+          }
+        },
+        "nase-parta": { ".read": true },
+        "archiv": { ".read": true }
+      }
+    }
+  }
 ================================================================
 -->
 <head>
@@ -65,22 +70,27 @@ NASTAVENÍ (jednorázově, ve Firebase konzoli projektu pivni-pocitacka):
     .kour{ color:var(--kour); } .male{ font-size:13px; }
     button{ font-family:inherit; cursor:pointer; border:none; }
     button:active{ transform:scale(.97); }
-    .btn{ border-radius:12px; padding:11px 16px; font-weight:700; font-size:15px; color:#241503; background:linear-gradient(180deg, var(--lezak), var(--lezak-tmavy)); border:2px solid var(--mosaz); }
+    .btn{ border-radius:12px; padding:10px 14px; font-weight:700; font-size:14px; color:#241503; background:linear-gradient(180deg, var(--lezak), var(--lezak-tmavy)); border:2px solid var(--mosaz); }
     .btn.sek{ background:transparent; color:var(--kour); border:1px solid var(--okraj); font-weight:600; }
-    .btn.nebezpeci{ background:transparent; color:var(--cerv); border:1px solid var(--cerv); }
+    .btn.mini{ padding:6px 10px; font-size:12px; border-radius:10px; }
     .btn:disabled{ opacity:.45; }
     input.pole{ width:100%; border-radius:12px; padding:11px 14px; font-size:16px; background:var(--pozadi); border:1px solid var(--okraj); color:var(--pena); }
     input.pole:focus{ outline:none; border-color:var(--lezak); }
-    .radek{ display:flex; justify-content:space-between; align-items:center; gap:10px; padding:7px 0; border-top:1px solid rgba(255,255,255,.06); }
+    .polozka{ padding:10px 0; border-top:1px solid rgba(255,255,255,.06); }
+    .polozka:first-of-type{ border-top:none; }
+    .polozka .hlava{ display:flex; justify-content:space-between; align-items:center; gap:8px; }
+    .nazevAkce{ font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .odznak{ font-size:11px; font-weight:700; color:#241503; background:var(--lezak); border-radius:999px; padding:2px 8px; margin-left:8px; }
+    .tlacitka{ display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
+    .radek{ display:flex; justify-content:space-between; align-items:center; gap:10px; padding:6px 0; border-top:1px solid rgba(255,255,255,.06); }
     .radek:first-of-type{ border-top:none; }
     .jmeno-text{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .chyba{ background:#31170e; color:var(--cerv); border:1px solid var(--cerv); border-radius:12px; padding:8px 12px; font-size:13px; text-align:center; margin-top:12px; }
     .ok{ background:#1c2416; color:var(--zelena); border:1px solid var(--zelena); border-radius:12px; padding:8px 12px; font-size:13px; text-align:center; margin-top:12px; }
+    .nazevKarty{ font-weight:700; font-size:16px; margin-bottom:8px; }
     code{ background:var(--pozadi); padding:1px 5px; border-radius:6px; font-size:12px; word-break:break-all; }
-    a{ color:var(--lezak); }
-    .hlava{ display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px; }
-    .hlava .nazev{ font-weight:700; font-size:16px; }
     ol{ padding-left:20px; } li{ margin-bottom:8px; }
+    .hlavaKarty{ display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px; }
   </style>
 </head>
 <body>
@@ -96,7 +106,6 @@ NASTAVENÍ (jednorázově, ve Firebase konzoli projektu pivni-pocitacka):
   "use strict";
 
   /* ===================== KONFIGURACE ===================== */
-  /* Sem vlož celý firebaseConfig z konzole (Project settings -> Web app). */
   const firebaseConfig = {
     apiKey: "AIzaSyC1MjOGG_trg1_5BH6e5NLJZh3Jtvuj_vg",
     authDomain: "pivni-pocitacka.firebaseapp.com",
@@ -106,35 +115,32 @@ NASTAVENÍ (jednorázově, ve Firebase konzoli projektu pivni-pocitacka):
     messagingSenderId: "778652678455",
     appId: "1:778652678455:web:5085fffee1ecacc88482b2"
   };
-
-  const ADMIN_EMAILS = ["gabr.kova@gmail.com"];  // seznam adminů (UI brána; ostrá brána je v pravidlech DB)
-  const PARTA = "nase-parta";
+  const ADMIN_EMAILS = ["gabr.kova@gmail.com"];  // UI brána; ostrá brána je v pravidlech DB
   /* ======================================================= */
 
   const DB = String(firebaseConfig.databaseURL || "").replace(/\/+$/, "");
   const jeNastaveno = !JSON.stringify(firebaseConfig).includes("SEM_VLOZ");
 
-  let auth = null, uzivatel = null, chyba = "", info = "";
-  let aktivni = null;       // {pole:[{name,count}], celkem}
-  let archivSeznam = null;  // [{id, nazev, kdy, pole, celkem}]
-  let nahled = null;        // {nazev, kdy, pole, celkem}
-  let pracuji = false;
+  let auth = null, uzivatel = null, chyba = "", info = "", pracuji = false;
+  let aktivniId = null;
+  let akce = {};          // { id: {nazev, zalozeno, hraci, _log} }
+  let legacy = null;      // {naseParta, archiv} když existují stará data k importu
+  let nahledId = null;
 
   const slug = (s) => (s || "").toLowerCase().normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "akce";
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
   const sklonuj = (n) => (n === 1 ? "pivo" : n >= 2 && n <= 4 ? "piva" : "piv");
   const fmtDatum = (t) => { try { return new Date(t).toLocaleString("cs-CZ"); } catch (e) { return ""; } };
+  const jeAdmin = () => uzivatel && ADMIN_EMAILS.indexOf((uzivatel.email || "").toLowerCase()) >= 0;
 
-  /* Z uzlu (objektu hráčů) udělá seřazený žebříček, přeskočí služební klíče "_" */
-  function zebricekZ(uzel) {
-    const pole = Object.entries(uzel || {})
+  function hraciZ(obj) {
+    return Object.entries(obj || {})
       .filter(([k]) => k.charAt(0) !== "_")
-      .map(([k, v]) => ({ name: String((v && v.name) || k), count: Math.max(0, (v && typeof v.count === "number") ? v.count : 0) }));
-    pole.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "cs"));
-    const celkem = pole.reduce((s, r) => s + r.count, 0);
-    return { pole, celkem };
+      .map(([k, v]) => ({ name: String((v && v.name) || k), count: Math.max(0, (v && typeof v.count === "number") ? v.count : 0) }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "cs"));
   }
+  const soucet = (pole) => pole.reduce((s, r) => s + r.count, 0);
 
   function exportCsv(pole, nazevSouboru) {
     const hlav = "Jméno;Počet piv;Litry";
@@ -147,50 +153,120 @@ NASTAVENÍ (jednorázově, ve Firebase konzoli projektu pivni-pocitacka):
     setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1500);
   }
 
-  const jeAdmin = () => uzivatel && ADMIN_EMAILS.indexOf((uzivatel.email || "").toLowerCase()) >= 0;
+  async function token() { return await uzivatel.getIdToken(); }
+  const napis = (t) => "?auth=" + encodeURIComponent(t);
 
-  /* ---------- data ---------- */
-  async function nactiAktivni() {
-    const r = await fetch(DB + "/pivo/" + PARTA + ".json?v=" + Date.now(), { cache: "no-store" });
-    const d = await r.json();
-    aktivni = zebricekZ(d || {});
+  /* ---------- načtení ---------- */
+  async function nactiVse() {
+    const idRaw = await (await fetch(DB + "/pivo/aktivni.json?v=" + Date.now(), { cache: "no-store" })).json();
+    aktivniId = (typeof idRaw === "string" && idRaw) ? idRaw : null;
+    akce = await (await fetch(DB + "/pivo/akce.json?v=" + Date.now(), { cache: "no-store" })).json() || {};
+
+    // Import starých dat nabízíme jen, když v novém modelu ještě žádná akce není.
+    legacy = null;
+    if (!akce || Object.keys(akce).length === 0) {
+      const np = await (await fetch(DB + "/pivo/nase-parta.json?v=" + Date.now(), { cache: "no-store" })).json();
+      const ar = await (await fetch(DB + "/pivo/archiv.json?v=" + Date.now(), { cache: "no-store" })).json();
+      const npHraci = np ? hraciZ(np) : [];
+      const arPocet = ar ? Object.keys(ar).length : 0;
+      if (npHraci.length > 0 || arPocet > 0) legacy = { naseParta: np || null, archiv: ar || null };
+    }
   }
 
-  async function nactiArchiv() {
-    const r = await fetch(DB + "/pivo/archiv.json?v=" + Date.now(), { cache: "no-store" });
-    const d = await r.json() || {};
-    archivSeznam = Object.entries(d).map(([id, v]) => {
-      const z = zebricekZ((v && v.data) || {});
-      return { id, nazev: (v && v.nazev) || id, kdy: (v && v.archivovanoKdy) || null, pole: z.pole, celkem: z.celkem };
-    }).sort((a, b) => (b.kdy || 0) - (a.kdy || 0));
-  }
-
-  async function archivuj() {
-    const el = document.getElementById("nazev-akce");
+  /* ---------- operace ---------- */
+  async function zalozAkci() {
+    const el = document.getElementById("novy-nazev");
     const nazev = ((el && el.value) || "").trim().slice(0, 60);
-    if (!nazev) { chyba = "Zadej název akce, pod kterým se archiv uloží."; render(); return; }
-    if (!window.confirm('Archivovat aktuální akci jako „' + nazev + '" a začít evidenci nanovo?\n\nAktuální tabule se vyprázdní. Data zůstanou v archivu.')) return;
+    if (!nazev) { chyba = "Zadej název akce."; render(); return; }
     pracuji = true; chyba = ""; info = ""; render();
     try {
-      const token = await uzivatel.getIdToken();
-      const snap = await (await fetch(DB + "/pivo/" + PARTA + ".json?v=" + Date.now(), { cache: "no-store" })).json();
+      const t = await token();
       const id = slug(nazev) + "-" + Date.now();
-      const zapisArchiv = await fetch(DB + "/pivo/archiv/" + id + ".json?auth=" + encodeURIComponent(token), {
+      let r = await fetch(DB + "/pivo/akce/" + id + ".json" + napis(t), {
         method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ nazev: nazev, archivovanoKdy: Date.now(), archivoval: uzivatel.email, data: snap || {} })
+        body: JSON.stringify({ nazev: nazev, zalozeno: Date.now() })
       });
-      if (!zapisArchiv.ok) throw new Error("archiv " + zapisArchiv.status);
-      // vynulovat aktivní tabuli a bumpnout epochu (telefony se srovnají na 0)
-      const reset = await fetch(DB + "/pivo/" + PARTA + ".json", {
-        method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ _epoch: Date.now() })
-      });
-      if (!reset.ok) throw new Error("reset " + reset.status);
-      info = 'Akce „' + nazev + '" archivována, evidence začíná nanovo.';
-      await nactiAktivni(); await nactiArchiv();
-    } catch (e) {
-      chyba = "Archivace se nepovedla (" + e.message + "). Zkontroluj pravidla DB a oprávnění.";
-    }
+      if (!r.ok) throw new Error("akce " + r.status);
+      r = await fetch(DB + "/pivo/aktivni.json" + napis(t), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(id) });
+      if (!r.ok) throw new Error("aktivni " + r.status);
+      info = 'Akce „' + nazev + '" založena a nastavena jako aktuální.';
+      await nactiVse();
+    } catch (e) { chyba = "Založení se nepovedlo (" + e.message + ")."; }
+    pracuji = false; render();
+  }
+
+  async function nastavAktualni(id) {
+    const naz = (akce[id] && akce[id].nazev) || id;
+    if (!window.confirm('Nastavit „' + naz + '" jako aktuální akci?\n\nAplikace všem přepne na tuto akci.')) return;
+    pracuji = true; chyba = ""; info = ""; render();
+    try {
+      const t = await token();
+      const r = await fetch(DB + "/pivo/aktivni.json" + napis(t), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(id) });
+      if (!r.ok) throw new Error("aktivni " + r.status);
+      info = 'Aktuální akce je nyní „' + naz + '".';
+      await nactiVse();
+    } catch (e) { chyba = "Přepnutí se nepovedlo (" + e.message + ")."; }
+    pracuji = false; render();
+  }
+
+  async function prejmenuj(id) {
+    const stary = (akce[id] && akce[id].nazev) || "";
+    const novy = window.prompt("Nový název akce:", stary);
+    if (novy === null) return;
+    const n = novy.trim().slice(0, 60);
+    if (!n || n === stary) return;
+    pracuji = true; chyba = ""; info = ""; render();
+    try {
+      const t = await token();
+      const r = await fetch(DB + "/pivo/akce/" + id + "/nazev.json" + napis(t), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(n) });
+      if (!r.ok) throw new Error("nazev " + r.status);
+      info = "Akce přejmenována.";
+      await nactiVse();
+    } catch (e) { chyba = "Přejmenování se nepovedlo (" + e.message + ")."; }
+    pracuji = false; render();
+  }
+
+  async function importuj() {
+    if (!legacy) return;
+    if (!window.confirm("Importovat dosavadní data (aktuální tabuli + archiv) do nového modelu?\n\nStará data zůstanou beze změny, jen se zkopírují.")) return;
+    pracuji = true; chyba = ""; info = ""; render();
+    try {
+      const t = await token();
+      let aktivniNovy = null;
+
+      // 1) aktuální tabule (nase-parta), pokud má hráče
+      const np = legacy.naseParta;
+      const npHraci = np ? Object.fromEntries(Object.entries(np).filter(([k]) => k.charAt(0) !== "_")) : {};
+      if (Object.keys(npHraci).length > 0) {
+        const id = "aktualni-" + Date.now();
+        const telo = { nazev: "Aktuální (import)", zalozeno: Date.now(), hraci: npHraci };
+        if (np && np._log) telo._log = np._log;
+        const r = await fetch(DB + "/pivo/akce/" + id + ".json" + napis(t), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(telo) });
+        if (!r.ok) throw new Error("aktualni " + r.status);
+        aktivniNovy = id;
+      }
+
+      // 2) archivované akce
+      const ar = legacy.archiv || {};
+      for (const aid of Object.keys(ar)) {
+        const v = ar[aid] || {};
+        const data = v.data || {};
+        const hraci = Object.fromEntries(Object.entries(data).filter(([k]) => k.charAt(0) !== "_"));
+        const telo = { nazev: v.nazev || aid, zalozeno: v.archivovanoKdy || Date.now(), hraci: hraci };
+        if (data._log) telo._log = data._log;
+        const novyId = slug(v.nazev || aid) + "-" + (v.archivovanoKdy || Date.now());
+        const r = await fetch(DB + "/pivo/akce/" + novyId + ".json" + napis(t), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(telo) });
+        if (!r.ok) throw new Error("archiv " + r.status);
+      }
+
+      // 3) když byla aktuální tabule, nastav ji jako aktivní
+      if (aktivniNovy) {
+        const r = await fetch(DB + "/pivo/aktivni.json" + napis(t), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(aktivniNovy) });
+        if (!r.ok) throw new Error("aktivni " + r.status);
+      }
+      info = "Import hotový. Zkontroluj názvy akcí a případně je přejmenuj.";
+      await nactiVse();
+    } catch (e) { chyba = "Import se nepovedl (" + e.message + ")."; }
     pracuji = false; render();
   }
 
@@ -200,14 +276,21 @@ NASTAVENÍ (jednorázově, ve Firebase konzoli projektu pivni-pocitacka):
     const p = new firebase.auth.GoogleAuthProvider();
     auth.signInWithPopup(p).catch((e) => { chyba = "Přihlášení se nepovedlo: " + e.message; render(); });
   }
-  function odhlasit() { auth.signOut(); nahled = null; }
+  function odhlasit() { nahledId = null; auth.signOut(); }
+
+  /* ---------- UI akce ---------- */
+  function otevriNahled(id) { nahledId = id; render(); }
+  function zavriNahled() { nahledId = null; render(); }
+  function exportAkce(id) {
+    const a = akce[id]; if (!a) return;
+    exportCsv(hraciZ(a.hraci || {}), "pivo-" + slug(a.nazev || id) + ".csv");
+  }
+  async function obnovVse() { chyba = ""; info = ""; try { await nactiVse(); } catch (e) { chyba = "Načtení selhalo: " + e.message; } render(); }
 
   /* ---------- vykreslení ---------- */
   function zebricekHtml(pole) {
-    if (!pole.length) return '<div class="male kour" style="text-align:center;padding:10px 0;">Zatím prázdné.</div>';
-    return pole.map((r, i) =>
-      '<div class="radek"><div class="jmeno-text">' + (i + 1) + ". " + esc(r.name) + "</div><div style=\"font-weight:700;\">" + r.count + "</div></div>"
-    ).join("");
+    if (!pole.length) return '<div class="male kour" style="text-align:center;padding:10px 0;">Prázdné.</div>';
+    return pole.map((r, i) => '<div class="radek"><div class="jmeno-text">' + (i + 1) + ". " + esc(r.name) + '</div><div style="font-weight:700;">' + r.count + "</div></div>").join("");
   }
 
   function render() {
@@ -215,88 +298,79 @@ NASTAVENÍ (jednorázově, ve Firebase konzoli projektu pivni-pocitacka):
     const pruh = (chyba ? '<div class="chyba">' + esc(chyba) + "</div>" : "") + (info ? '<div class="ok">' + esc(info) + "</div>" : "");
 
     if (!jeNastaveno) {
-      app.innerHTML =
-        '<div class="karta"><div style="font-weight:700;font-size:17px;margin-bottom:8px;">Admin ještě není nastaven 🔧</div>' +
-        '<div class="male kour">Do souboru <code>admin.html</code> je potřeba vložit <code>firebaseConfig</code> z konzole a nastavit Google přihlášení. Postup je v komentáři na začátku souboru:</div>' +
-        '<ol class="male" style="margin-top:8px;">' +
-          "<li>Authentication → Sign-in method → zapni <b>Google</b>.</li>" +
-          "<li>Authentication → Settings → Authorized domains → přidej <code>gabrkova.github.io</code>.</li>" +
-          "<li>Project settings → Web app → zkopíruj <code>firebaseConfig</code> a vlož do souboru.</li>" +
-          "<li>Realtime Database → Rules → vlož pravidla ze souboru a Publish.</li>" +
-        "</ol></div>";
+      app.innerHTML = '<div class="karta"><div class="nazevKarty">Admin ještě není nastaven 🔧</div>' +
+        '<div class="male kour">Do souboru doplň <code>firebaseConfig</code> a nastav Google přihlášení (postup v hlavičce souboru).</div></div>';
       return;
     }
-
     if (!uzivatel) {
-      app.innerHTML = pruh +
-        '<div class="karta" style="text-align:center;">' +
+      app.innerHTML = pruh + '<div class="karta" style="text-align:center;">' +
         '<div class="kour male" style="margin-bottom:14px;">Přihlas se svým Google účtem.</div>' +
         '<button class="btn" onclick="prihlasit()">Přihlásit se přes Google</button></div>';
       return;
     }
-
     if (!jeAdmin()) {
-      app.innerHTML = pruh +
-        '<div class="karta" style="text-align:center;">' +
+      app.innerHTML = pruh + '<div class="karta" style="text-align:center;">' +
         '<div style="margin-bottom:8px;">Přihlášen: <b>' + esc(uzivatel.email || "") + "</b></div>" +
-        '<div class="cerv male" style="color:var(--cerv);margin-bottom:14px;">Tento účet nemá administrátorské oprávnění.</div>' +
+        '<div style="color:var(--cerv);margin-bottom:14px;" class="male">Tento účet nemá administrátorské oprávnění.</div>' +
         '<button class="btn sek" onclick="odhlasit()">Odhlásit</button></div>';
       return;
     }
 
-    // Náhled archivované akce (jen čtení)
-    if (nahled) {
-      app.innerHTML = pruh +
-        '<div class="karta"><div class="hlava"><div class="nazev">' + esc(nahled.nazev) + "</div>" +
-          '<button class="btn sek" onclick="zavriNahled()">← Zpět</button></div>' +
-          '<div class="male kour" style="margin-bottom:8px;">Archivováno ' + fmtDatum(nahled.kdy) + " · " + nahled.celkem + " " + sklonuj(nahled.celkem) + " · " + (nahled.celkem * 0.5).toLocaleString("cs-CZ") + " l · jen ke čtení</div>" +
-          zebricekHtml(nahled.pole) +
-          '<div style="margin-top:12px;"><button class="btn sek" onclick="exportNahled()">⬇ Export (CSV)</button></div>' +
-        "</div>";
+    if (nahledId && akce[nahledId]) {
+      const a = akce[nahledId];
+      const pole = hraciZ(a.hraci || {});
+      const c = soucet(pole);
+      app.innerHTML = pruh + '<div class="karta"><div class="hlavaKarty"><div class="nazevAkce">' + esc(a.nazev || nahledId) + "</div>" +
+        '<button class="btn sek mini" onclick="zavriNahled()">← Zpět</button></div>' +
+        '<div class="male kour" style="margin-bottom:8px;">' + pole.length + " lidí · " + c + " " + sklonuj(c) + " · " + (c * 0.5).toLocaleString("cs-CZ") + " l · jen ke čtení</div>" +
+        zebricekHtml(pole) +
+        '<div class="tlacitka" style="margin-top:12px;"><button class="btn sek mini" onclick="exportAkce(\'' + esc(nahledId) + '\')">⬇ Export (CSV)</button></div></div>';
       return;
     }
 
-    const a = aktivni || { pole: [], celkem: 0 };
-    const arch = archivSeznam || [];
-    app.innerHTML = pruh +
-      // Hlava s uživatelem
-      '<div class="karta"><div class="hlava"><div class="male">Admin: <b>' + esc(uzivatel.email || "") + "</b></div>" +
-        '<button class="btn sek" onclick="odhlasit()">Odhlásit</button></div>' +
-        '<div class="male kour">Aktivní akce běží na <code>' + PARTA + "</code>.</div></div>" +
+    const idy = Object.keys(akce).sort((x, y) => ((akce[y] && akce[y].zalozeno) || 0) - ((akce[x] && akce[x].zalozeno) || 0));
 
-      // Aktivní akce
-      '<div class="karta"><div class="hlava"><div class="nazev">Aktivní akce</div>' +
-        '<button class="btn sek" onclick="obnovVse()">Obnovit</button></div>' +
-        '<div class="male kour" style="margin-bottom:8px;">' + a.pole.length + " lidí · " + a.celkem + " " + sklonuj(a.celkem) + " · " + (a.celkem * 0.5).toLocaleString("cs-CZ") + " l</div>" +
-        zebricekHtml(a.pole) +
-        '<div style="margin-top:12px;"><button class="btn sek" onclick="exportAktivni()">⬇ Export (CSV)</button></div>' +
-      "</div>" +
+    let html = pruh +
+      '<div class="karta"><div class="hlavaKarty"><div class="male">Admin: <b>' + esc(uzivatel.email || "") + "</b></div>" +
+        '<button class="btn sek mini" onclick="odhlasit()">Odhlásit</button></div>' +
+        '<div class="male kour">Aktuální akce: ' + (aktivniId && akce[aktivniId] ? "<b>" + esc(akce[aktivniId].nazev || aktivniId) + "</b>" : "<i>žádná</i>") + "</div></div>";
 
-      // Archivace
-      '<div class="karta"><div class="nazev" style="margin-bottom:8px;">Archivovat a začít nanovo</div>' +
-        '<div class="male kour" style="margin-bottom:10px;">Uloží aktuální tabuli do archivu a vyprázdní ji pro novou akci. Telefonům se počítadlo srovná na nulu.</div>' +
-        '<input id="nazev-akce" class="pole" maxlength="60" placeholder="Název akce (např. Tatanice 2026)" style="margin-bottom:10px;" />' +
-        '<button class="btn nebezpeci" onclick="archivuj()"' + (pracuji ? " disabled" : "") + ">" + (pracuji ? "Pracuji…" : "Archivovat akci") + "</button>" +
-      "</div>" +
+    if (legacy) {
+      html += '<div class="karta"><div class="nazevKarty">Import dosavadních dat</div>' +
+        '<div class="male kour" style="margin-bottom:10px;">Našel jsem data ze starého modelu (aktuální tabule a/nebo archiv). Jednorázově je zkopíruju do nového modelu jako akce. Stará data zůstanou nedotčená.</div>' +
+        '<button class="btn" onclick="importuj()"' + (pracuji ? " disabled" : "") + ">" + (pracuji ? "Pracuji…" : "Importovat dosavadní data") + "</button></div>";
+    }
 
-      // Archiv
-      '<div class="karta"><div class="nazev" style="margin-bottom:8px;">Archiv akcí</div>' +
-        (arch.length === 0
-          ? '<div class="male kour" style="text-align:center;padding:8px 0;">Zatím žádná archivovaná akce.</div>'
-          : arch.map((x) =>
-              '<div class="radek"><div style="min-width:0;"><div class="jmeno-text" style="font-weight:600;">' + esc(x.nazev) + "</div>" +
-                '<div class="male kour">' + fmtDatum(x.kdy) + " · " + x.celkem + " " + sklonuj(x.celkem) + "</div></div>" +
-                '<button class="btn sek" onclick="otevriNahled(\'' + esc(x.id) + '\')">Zobrazit</button></div>'
-            ).join("")) +
-      "</div>";
+    html += '<div class="karta"><div class="nazevKarty">Nová akce</div>' +
+      '<div class="male kour" style="margin-bottom:10px;">Založí novou akci a rovnou ji nastaví jako aktuální (dosavadní akce zůstanou v seznamu).</div>' +
+      '<input id="novy-nazev" class="pole" maxlength="60" placeholder="Název akce (např. Tatanice 2026)" style="margin-bottom:10px;" />' +
+      '<button class="btn" onclick="zalozAkci()"' + (pracuji ? " disabled" : "") + ">" + (pracuji ? "Pracuji…" : "Založit a nastavit jako aktuální") + "</button></div>";
+
+    html += '<div class="karta"><div class="hlavaKarty"><div class="nazevKarty" style="margin:0;">Akce</div>' +
+      '<button class="btn sek mini" onclick="obnovVse()">Obnovit</button></div>';
+    if (idy.length === 0) {
+      html += '<div class="male kour" style="text-align:center;padding:8px 0;">Zatím žádná akce. Založ první výše.</div>';
+    } else {
+      html += idy.map((id) => {
+        const a = akce[id] || {};
+        const pole = hraciZ(a.hraci || {});
+        const c = soucet(pole);
+        const jeAkt = id === aktivniId;
+        return '<div class="polozka"><div class="hlava"><div style="min-width:0;">' +
+          '<div class="nazevAkce">' + esc(a.nazev || id) + (jeAkt ? '<span class="odznak">AKTUÁLNÍ</span>' : "") + "</div>" +
+          '<div class="male kour">' + fmtDatum(a.zalozeno) + " · " + pole.length + " lidí · " + c + " " + sklonuj(c) + "</div></div></div>" +
+          '<div class="tlacitka">' +
+            (jeAkt ? "" : '<button class="btn mini" onclick="nastavAktualni(\'' + esc(id) + '\')">Nastavit jako aktuální</button>') +
+            '<button class="btn sek mini" onclick="otevriNahled(\'' + esc(id) + '\')">Zobrazit</button>' +
+            '<button class="btn sek mini" onclick="prejmenuj(\'' + esc(id) + '\')">Přejmenovat</button>' +
+            '<button class="btn sek mini" onclick="exportAkce(\'' + esc(id) + '\')">Export</button>' +
+          "</div></div>";
+      }).join("");
+    }
+    html += "</div>";
+
+    app.innerHTML = html;
   }
-
-  /* ---------- akce z UI ---------- */
-  function exportAktivni() { if (aktivni) exportCsv(aktivni.pole, "aktivni-akce-" + new Date().toISOString().slice(0, 10) + ".csv"); }
-  function otevriNahled(id) { const x = (archivSeznam || []).find((y) => y.id === id); if (x) { nahled = x; render(); } }
-  function zavriNahled() { nahled = null; render(); }
-  function exportNahled() { if (nahled) exportCsv(nahled.pole, slug(nahled.nazev) + ".csv"); }
-  async function obnovVse() { chyba = ""; info = ""; try { await nactiAktivni(); await nactiArchiv(); } catch (e) { chyba = "Načtení selhalo: " + e.message; } render(); }
 
   /* ---------- start ---------- */
   (function start() {
@@ -305,13 +379,11 @@ NASTAVENÍ (jednorázově, ve Firebase konzoli projektu pivni-pocitacka):
       firebase.initializeApp(firebaseConfig);
       auth = firebase.auth();
       auth.onAuthStateChanged(async (u) => {
-        uzivatel = u; nahled = null; chyba = "";
-        if (u && jeAdmin()) { try { await nactiAktivni(); await nactiArchiv(); } catch (e) { chyba = "Načtení selhalo: " + e.message; } }
+        uzivatel = u; nahledId = null; chyba = "";
+        if (u && jeAdmin()) { try { await nactiVse(); } catch (e) { chyba = "Načtení selhalo: " + e.message; } }
         render();
       });
-    } catch (e) {
-      chyba = "Firebase se nepodařilo spustit: " + e.message; render();
-    }
+    } catch (e) { chyba = "Firebase se nepodařilo spustit: " + e.message; render(); }
   })();
   </script>
 </body>
