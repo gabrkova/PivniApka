@@ -120,6 +120,7 @@ const nastaveno = /^https:\/\//.test(zaklad) && !zaklad.includes("SEM-VLOZ");
 let faze = "start";        // setup | zadnaAkce | jmeno | hraje
 let akceId = null;
 let akceNazev = "";
+let odemceno = true;       // false = akce je uzamčená (jen ke čtení)
 let jmeno = "";
 let mujPocet = 0;
 let radky = {};            // hraci aktivní akce: { slug: {name, count, updatedAt} }
@@ -172,6 +173,7 @@ async function nacti(tiche) {
 
       const node = await (await fetch(urlAkce("") + "?v=" + Date.now(), { cache: "no-store" })).json() || {};
       akceNazev = (node && node.nazev) ? String(node.nazev) : "Aktuální akce";
+      odemceno = !(node && node.odemcena === false);
       radky = (node && typeof node.hraci === "object" && node.hraci) ? node.hraci : {};
       logData = (node && typeof node._log === "object" && node._log) ? node._log : {};
 
@@ -224,8 +226,8 @@ async function zapisLog(delta) {
 }
 
 /* ---------- akce z UI ---------- */
-function pridej() { mujPocet++; render(); uloz(); zapisLog(1); }
-function uber() { if (mujPocet <= 0) return; mujPocet--; render(); uloz(); zapisLog(-1); }
+function pridej() { if (!odemceno) return; mujPocet++; render(); uloz(); zapisLog(1); }
+function uber() { if (!odemceno || mujPocet <= 0) return; mujPocet--; render(); uloz(); zapisLog(-1); }
 
 async function prihlas() {
   const el = document.getElementById("vstup");
@@ -236,7 +238,8 @@ async function prihlas() {
     const r = await fetch(urlAkce("/hraci/" + slug(n)));
     if (r.ok) { const d = await r.json(); if (d && typeof d.count === "number") mujPocet = Math.max(0, d.count); }
   } catch (e) {}
-  if (mujPocet === 0) uloz(); else render();
+  if (odemceno) { if (mujPocet === 0) uloz(); else render(); }
+  else render();
   nacti(true);
 }
 
@@ -395,14 +398,22 @@ function render() {
           '<div class="prawo kour">' + znamenko + stav + " · " + fmtCas(e.t) + "</div></div>";
       }).join("");
 
-  app.innerHTML = pruhChyby +
+  const zamek = !odemceno;
+  const bannerZamek = zamek
+    ? '<div class="karta" style="text-align:center;background:#2a2410;border-color:var(--mosaz);color:var(--lezak);font-weight:700;padding:12px;">🔒 Akce je uzamčená — jen ke čtení</div>'
+    : "";
+  const pipaHtml = zamek
+    ? '<div class="pipa" style="opacity:.4;filter:grayscale(.4);cursor:default;"><span class="emoji">🔒</span><span class="napis" style="font-size:18px;">ZAMČENO</span></div>'
+    : '<button class="pipa" onclick="pridej()"><span class="emoji">🍺</span><span class="napis">+1 PIVO</span></button>';
+  const opravaHtml = zamek ? "" : ('<button class="oprava" onclick="uber()"' + (mujPocet <= 0 ? " disabled" : "") + ">&minus; 1 (překlep)</button>");
+
+  app.innerHTML = pruhChyby + bannerZamek +
     '<div class="karta stred">' +
       '<div class="male kour">Na tácku má</div>' +
       '<div style="font-weight:700;font-size:19px;">' + esc(jmeno) + "</div>" +
       '<div class="cislo">' + mujPocet + "</div>" +
       '<div class="male kour" style="margin:-4px 0 16px;">' + sklonuj(mujPocet) + "</div>" +
-      '<button class="pipa" onclick="pridej()"><span class="emoji">🍺</span><span class="napis">+1 PIVO</span></button>' +
-      '<button class="oprava" onclick="uber()"' + (mujPocet <= 0 ? " disabled" : "") + ">&minus; 1 (překlep)</button>" +
+      pipaHtml + opravaHtml +
     "</div>" +
 
     '<div class="karta radek-souhrn" style="padding-top:12px;padding-bottom:12px;">' +
@@ -427,16 +438,18 @@ function render() {
       (cas ? "<div>Naposledy obnoveno " + cas.toLocaleTimeString("cs-CZ") + ", obnovuje se každých 15 s.</div>" : "") +
       '<div style="margin-top:4px;">Žebříček i dění vidí všichni, kdo mají odkaz.</div>' +
       '<div style="margin-top:12px;"><button class="obnov" onclick="exportCsv()">⬇ Export žebříčku (CSV)</button></div>' +
-      (prejmenovani
-        ? '<div style="margin-top:14px;display:flex;gap:8px;justify-content:center;align-items:center;flex-wrap:wrap;">' +
-            '<input id="nove-jmeno" class="pole" style="max-width:190px;padding:8px 12px;font-size:15px;" maxlength="24" value="' + esc(jmeno) + '" onkeydown="if(event.key===\'Enter\')ulozNoveJmeno()" />' +
-            '<button class="ano" onclick="ulozNoveJmeno()">Uložit</button>' +
-            '<button class="ne" onclick="zrusPrejmenovat()">Zrušit</button></div>' +
-          '<div class="male kour" style="margin-top:6px;">Změní tvé jméno a počet piv ti zůstane.</div>'
-        : '<div style="margin-top:14px;line-height:2.1;">' +
-            '<button onclick="zacniPrejmenovat()">Přejmenovat se</button>' +
-            "&nbsp;&nbsp;·&nbsp;&nbsp;" +
-            '<button onclick="prihlasitJako()">Přihlásit se jako někdo jiný</button></div>') +
+      (zamek
+        ? '<div style="margin-top:14px;"><button onclick="prihlasitJako()">Přihlásit se jako někdo jiný</button></div>'
+        : (prejmenovani
+          ? '<div style="margin-top:14px;display:flex;gap:8px;justify-content:center;align-items:center;flex-wrap:wrap;">' +
+              '<input id="nove-jmeno" class="pole" style="max-width:190px;padding:8px 12px;font-size:15px;" maxlength="24" value="' + esc(jmeno) + '" onkeydown="if(event.key===\'Enter\')ulozNoveJmeno()" />' +
+              '<button class="ano" onclick="ulozNoveJmeno()">Uložit</button>' +
+              '<button class="ne" onclick="zrusPrejmenovat()">Zrušit</button></div>' +
+            '<div class="male kour" style="margin-top:6px;">Změní tvé jméno a počet piv ti zůstane.</div>'
+          : '<div style="margin-top:14px;line-height:2.1;">' +
+              '<button onclick="zacniPrejmenovat()">Přejmenovat se</button>' +
+              "&nbsp;&nbsp;·&nbsp;&nbsp;" +
+              '<button onclick="prihlasitJako()">Přihlásit se jako někdo jiný</button></div>')) +
       '<div style="margin-top:12px;opacity:.7;">Pijte s rozumem. 🍻</div>' +
     "</div>";
 

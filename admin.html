@@ -33,8 +33,8 @@ NASTAVENÍ (Firebase konzole, projekt pivni-pocitacka):
           ".read": true,
           "$id": {
             ".write": "auth != null && auth.token.email_verified == true && auth.token.email == 'gabr.kova@gmail.com'",
-            "hraci": { ".write": "$id === root.child('pivo/aktivni').val()" },
-            "_log":  { ".write": "$id === root.child('pivo/aktivni').val()" }
+            "hraci": { ".write": "$id === root.child('pivo/aktivni').val() && root.child('pivo/akce/' + $id + '/odemcena').val() !== false" },
+            "_log":  { ".write": "$id === root.child('pivo/aktivni').val() && root.child('pivo/akce/' + $id + '/odemcena').val() !== false" }
           }
         },
         "nase-parta": { ".read": true },
@@ -184,7 +184,7 @@ NASTAVENÍ (Firebase konzole, projekt pivni-pocitacka):
       const id = slug(nazev) + "-" + Date.now();
       let r = await fetch(DB + "/pivo/akce/" + id + ".json" + napis(t), {
         method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ nazev: nazev, zalozeno: Date.now() })
+        body: JSON.stringify({ nazev: nazev, zalozeno: Date.now(), odemcena: true })
       });
       if (!r.ok) throw new Error("akce " + r.status);
       r = await fetch(DB + "/pivo/aktivni.json" + napis(t), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(id) });
@@ -223,6 +223,22 @@ NASTAVENÍ (Firebase konzole, projekt pivni-pocitacka):
       info = "Akce přejmenována.";
       await nactiVse();
     } catch (e) { chyba = "Přejmenování se nepovedlo (" + e.message + ")."; }
+    pracuji = false; render();
+  }
+
+  async function prepniZamek(id) {
+    const a = akce[id] || {};
+    const nova = (a.odemcena === false); // bylo zamčeno -> odemknout; jinak zamknout
+    pracuji = true; chyba = ""; info = ""; render();
+    try {
+      const t = await token();
+      const r = await fetch(DB + "/pivo/akce/" + id + "/odemcena.json" + napis(t), {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(nova)
+      });
+      if (!r.ok) throw new Error("odemcena " + r.status);
+      info = nova ? "Akce odemčena — uživatelé můžou zapisovat." : "Akce uzamčena — jen ke čtení.";
+      await nactiVse();
+    } catch (e) { chyba = "Změna zámku se nepovedla (" + e.message + ")."; }
     pracuji = false; render();
   }
 
@@ -356,11 +372,15 @@ NASTAVENÍ (Firebase konzole, projekt pivni-pocitacka):
         const pole = hraciZ(a.hraci || {});
         const c = soucet(pole);
         const jeAkt = id === aktivniId;
+        const odem = (a.odemcena !== false);
         return '<div class="polozka"><div class="hlava"><div style="min-width:0;">' +
-          '<div class="nazevAkce">' + esc(a.nazev || id) + (jeAkt ? '<span class="odznak">AKTUÁLNÍ</span>' : "") + "</div>" +
+          '<div class="nazevAkce">' + esc(a.nazev || id) +
+            (jeAkt ? '<span class="odznak">AKTUÁLNÍ</span>' : "") +
+            (odem ? "" : '<span class="odznak" style="background:#5b4a2a;color:var(--pena);">🔒 ZAMČENO</span>') + "</div>" +
           '<div class="male kour">' + fmtDatum(a.zalozeno) + " · " + pole.length + " lidí · " + c + " " + sklonuj(c) + "</div></div></div>" +
           '<div class="tlacitka">' +
             (jeAkt ? "" : '<button class="btn mini" onclick="nastavAktualni(\'' + esc(id) + '\')">Nastavit jako aktuální</button>') +
+            '<button class="btn sek mini" onclick="prepniZamek(\'' + esc(id) + '\')">' + (odem ? "Zamknout" : "Odemknout") + "</button>" +
             '<button class="btn sek mini" onclick="otevriNahled(\'' + esc(id) + '\')">Zobrazit</button>' +
             '<button class="btn sek mini" onclick="prejmenuj(\'' + esc(id) + '\')">Přejmenovat</button>' +
             '<button class="btn sek mini" onclick="exportAkce(\'' + esc(id) + '\')">Export</button>' +
