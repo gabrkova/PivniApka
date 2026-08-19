@@ -148,6 +148,7 @@ let cas = null;
 let obnovuji = false;
 let potvrzeni = false;
 let ukladam = false, ceka = false;
+let prejmenovani = false;   // probíhá inline přejmenování sebe sama
 
 /* ---------- pomocné funkce ---------- */
 const slug = (s) => (s || "").toLowerCase().normalize("NFD")
@@ -185,9 +186,20 @@ async function nacti(tiche) {
     const cely = (data && typeof data === "object") ? data : {};
     logData = (cely && typeof cely._log === "object" && cely._log) ? cely._log : {};
     radky = cely;
-    if (jmeno && !ukladam && !ceka) {
+    // Epocha: když admin akci archivuje a začne nanovo, změní se _epoch
+    // a všem telefonům se počítadlo srovná podle serveru (typicky na 0).
+    const serverEpoch = (typeof cely._epoch === "number") ? cely._epoch : 0;
+    let epochLocal = 0;
+    try { epochLocal = Number(localStorage.getItem("pivo_epoch") || 0); } catch (e) {}
+    const novaAkce = serverEpoch !== epochLocal;
+    if (novaAkce) { try { localStorage.setItem("pivo_epoch", String(serverEpoch)); } catch (e) {} }
+    if (jmeno) {
       const muj = radky[slug(jmeno)];
-      if (muj && typeof muj.count === "number") mujPocet = Math.max(0, muj.count);
+      if (novaAkce) {
+        mujPocet = (muj && typeof muj.count === "number") ? Math.max(0, muj.count) : 0;
+      } else if (!ukladam && !ceka) {
+        if (muj && typeof muj.count === "number") mujPocet = Math.max(0, muj.count);
+      }
     }
     cas = new Date();
     chyba = "";
@@ -259,10 +271,61 @@ async function prihlas() {
   nacti(true);
 }
 
-function zmenJmeno() {
+/* (ii) Přihlásit se jako někdo jiný — odhlásí tento telefon a nechá zadat jméno */
+function prihlasitJako() {
   jmenoLokalne(null);
-  jmeno = ""; potvrzeni = false; faze = "jmeno";
+  jmeno = ""; potvrzeni = false; prejmenovani = false; faze = "jmeno";
   render();
+}
+
+/* (i) Přejmenovat SEBE — zachová počet piv, přepíše jméno i v databázi */
+function zacniPrejmenovat() { prejmenovani = true; potvrzeni = false; render(); }
+function zrusPrejmenovat() { prejmenovani = false; render(); }
+
+async function ulozNoveJmeno() {
+  const el = document.getElementById("nove-jmeno");
+  const nove = ((el && el.value) || "").trim().slice(0, 24);
+  if (!nove || nove === jmeno) { prejmenovani = false; render(); return; }
+  const staryS = slug(jmeno), novyS = slug(nove);
+  let soucet = mujPocet;
+  try {
+    if (novyS !== staryS) {
+      const r = await fetch(urlPro("/" + novyS));
+      if (r.ok) { const d = await r.json(); if (d && typeof d.count === "number") soucet += Math.max(0, d.count); }
+    }
+    await fetch(urlPro("/" + novyS), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: nove, count: soucet, updatedAt: Date.now() })
+    });
+    if (novyS !== staryS) { try { await fetch(urlPro("/" + staryS), { method: "DELETE" }); } catch (e) {} }
+    jmeno = nove; jmenoLokalne(nove); mujPocet = soucet;
+    chyba = "";
+  } catch (e) {
+    chyba = "Přejmenování se nepovedlo — zkus to za chvíli.";
+  }
+  prejmenovani = false; render(); nacti(true);
+}
+
+/* (iii) Export žebříčku (kdo kolik) do CSV — otevře se v Excelu */
+function exportCsv() {
+  const pole = seznam();
+  const hlav = "Jméno;Počet piv;Litry";
+  const radky = pole.map((p) =>
+    '"' + String(p.name).replace(/"/g, '""') + '";' + p.count + ";" + (p.count * 0.5).toString().replace(".", ","));
+  const csv = "\uFEFF" + [hlav].concat(radky).join("\r\n");
+  try {
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const dnes = new Date().toISOString().slice(0, 10);
+    a.href = url; a.download = "pivni-pocitadlo-" + dnes + ".csv";
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1500);
+  } catch (e) {
+    chyba = "Export se nepovedl v tomto prohlížeči.";
+    render();
+  }
 }
 
 function chciSmazat() { potvrzeni = true; render(); }
@@ -327,7 +390,7 @@ function render() {
     app.innerHTML = pruhChyby +
       '<div class="karta">' +
         '<div style="font-weight:700;font-size:18px;margin-bottom:4px;">Jak ti říkají?</div>' +
-        '<div class="male kour" style="margin-bottom:14px;">Jméno tě zapíše na společný žebříček. Piš stejné jméno pokaždé, jinak si založíš nový účet.</div>' +
+        '<div class="male kour" style="margin-bottom:14px;">Napiš svoje jméno (nebo jméno člověka, za kterého zapisuješ). Stejné jméno = stejný účet, jiné jméno = nový účet. Tenhle telefon si jméno zapamatuje.</div>' +
         '<input id="vstup" class="pole" maxlength="24" placeholder="např. Franta" onkeydown="if(event.key===\'Enter\')prihlas()" />' +
         '<button class="hlavni" onclick="prihlas()">Jdu pít 🍺</button>' +
       "</div>";
@@ -407,15 +470,35 @@ function render() {
     '<div class="paticka">' +
       (cas ? "<div>Naposledy obnoveno " + cas.toLocaleTimeString("cs-CZ") + ", obnovuje se každých 15 s.</div>" : "") +
       '<div style="margin-top:4px;">Žebříček i dění vidí všichni, kdo mají odkaz.</div>' +
-      '<div style="margin-top:10px;">' +
-        '<button onclick="zmenJmeno()">Změnit jméno</button>' +
-        "&nbsp;&nbsp;·&nbsp;&nbsp;" +
-        (potvrzeni
-          ? 'Opravdu smazat? <button class="ano" onclick="smazMe()">Ano</button> / <button class="ne" onclick="nesmazat()">Ne</button>'
-          : '<button onclick="chciSmazat()">Smazat mě ze žebříčku</button>') +
+
+      '<div style="margin-top:12px;">' +
+        '<button class="obnov" onclick="exportCsv()">⬇ Export žebříčku (CSV)</button>' +
       "</div>" +
-      '<div style="margin-top:10px;opacity:.7;">Pijte s rozumem. 🍻</div>' +
+
+      (prejmenovani
+        ? '<div style="margin-top:14px;display:flex;gap:8px;justify-content:center;align-items:center;flex-wrap:wrap;">' +
+            '<input id="nove-jmeno" class="pole" style="max-width:190px;padding:8px 12px;font-size:15px;" maxlength="24" value="' + esc(jmeno) + '" onkeydown="if(event.key===\'Enter\')ulozNoveJmeno()" />' +
+            '<button class="ano" style="color:var(--lezak);" onclick="ulozNoveJmeno()">Uložit</button>' +
+            '<button class="ne" onclick="zrusPrejmenovat()">Zrušit</button>' +
+          "</div>" +
+          '<div class="male kour" style="margin-top:6px;">Změní tvé jméno a počet piv ti zůstane.</div>'
+        : '<div style="margin-top:14px;line-height:2.1;">' +
+            '<button onclick="zacniPrejmenovat()">Přejmenovat se</button>' +
+            "&nbsp;&nbsp;·&nbsp;&nbsp;" +
+            '<button onclick="prihlasitJako()">Přihlásit se jako někdo jiný</button>' +
+            "<br>" +
+            (potvrzeni
+              ? 'Opravdu smazat? <button class="ano" onclick="smazMe()">Ano</button> / <button class="ne" onclick="nesmazat()">Ne</button>'
+              : '<button onclick="chciSmazat()">Smazat mě ze žebříčku</button>') +
+          "</div>") +
+
+      '<div style="margin-top:12px;opacity:.7;">Pijte s rozumem. 🍻</div>' +
     "</div>";
+
+  if (prejmenovani) {
+    const nj = document.getElementById("nove-jmeno");
+    if (nj) { nj.focus(); nj.select(); }
+  }
 }
 
 /* ---------- start a samočinná obnova ---------- */

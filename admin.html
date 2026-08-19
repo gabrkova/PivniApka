@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="cs">
+<!--
+================================================================
+PIVNÍ POČÍTADLO — ADMIN
+
+Co umí:
+  • přihlášení přes Google účet (první admin: gabr.kova@gmail.com),
+  • archivovat aktuální akci a začít evidenci nanovo,
+  • prohlížet staré (archivované) akce — jen čtení,
+  • export žebříčku (kdo kolik) do CSV, u aktivní i archivované akce.
+
+NASTAVENÍ (jednorázově, ve Firebase konzoli projektu pivni-pocitacka):
+
+1) Authentication -> Sign-in method -> zapni poskytovatele „Google".
+2) Authentication -> Settings -> Authorized domains -> přidej
+   „gabrkova.github.io" (aby fungovalo přihlášení z GitHub Pages).
+3) Project settings -> General -> Your apps -> Add app -> Web (</>),
+   zaregistruj (název třeba „pivni-admin") a zkopíruj celý objekt
+   firebaseConfig. Vlož ho níže místo bloku SEM_VLOZ.
+4) Realtime Database -> Rules -> nahraď pravidla těmito a Publish:
+
+   {
+     "rules": {
+       "pivo": {
+         "nase-parta": { ".read": true, ".write": true },
+         "archiv": {
+           ".read": true,
+           ".write": "auth != null && auth.token.email_verified == true && auth.token.email == 'gabr.kova@gmail.com'"
+         }
+       }
+     }
+   }
+
+   (Aktivní tabule zůstává veřejná; do archivu smí zapisovat jen admin.
+    Dalšího admina přidáš rozšířením podmínky .write o další e-mail.)
+
+5) Nahraj tento soubor jako admin.html do repozitáře gabrkova/PivniApka.
+   Admin poběží na https://gabrkova.github.io/PivniApka/admin.html
+================================================================
+-->
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pivní počítadlo — admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Alfa+Slab+One&family=Archivo:wght@400;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root{
+      --pozadi:#150e07; --pozadi2:#231508; --karta:#241808; --okraj:#3d2d14;
+      --lezak:#f0a71f; --lezak-tmavy:#b97a0c; --mosaz:#6b4a09;
+      --pena:#f7efdc; --kour:#a3906f; --cerv:#d0704e; --zelena:#7ea86a;
+    }
+    *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+    body{
+      margin:0; min-height:100vh; color:var(--pena);
+      font-family:'Archivo',system-ui,sans-serif;
+      background:radial-gradient(900px 520px at 50% -8%, var(--pozadi2), var(--pozadi) 62%);
+      display:flex; justify-content:center; padding:24px 16px;
+    }
+    .obal{ width:100%; max-width:32rem; }
+    .titul{ font-family:'Alfa Slab One',serif; font-size:26px; color:var(--lezak); text-align:center; text-shadow:0 2px 0 rgba(0,0,0,.45); }
+    .podtitul{ color:var(--kour); font-size:13px; text-align:center; margin-top:2px; }
+    .karta{ background:var(--karta); border:1px solid var(--okraj); border-radius:16px; padding:18px; margin-top:14px; }
+    .kour{ color:var(--kour); } .male{ font-size:13px; }
+    button{ font-family:inherit; cursor:pointer; border:none; }
+    button:active{ transform:scale(.97); }
+    .btn{ border-radius:12px; padding:11px 16px; font-weight:700; font-size:15px; color:#241503; background:linear-gradient(180deg, var(--lezak), var(--lezak-tmavy)); border:2px solid var(--mosaz); }
+    .btn.sek{ background:transparent; color:var(--kour); border:1px solid var(--okraj); font-weight:600; }
+    .btn.nebezpeci{ background:transparent; color:var(--cerv); border:1px solid var(--cerv); }
+    .btn:disabled{ opacity:.45; }
+    input.pole{ width:100%; border-radius:12px; padding:11px 14px; font-size:16px; background:var(--pozadi); border:1px solid var(--okraj); color:var(--pena); }
+    input.pole:focus{ outline:none; border-color:var(--lezak); }
+    .radek{ display:flex; justify-content:space-between; align-items:center; gap:10px; padding:7px 0; border-top:1px solid rgba(255,255,255,.06); }
+    .radek:first-of-type{ border-top:none; }
+    .jmeno-text{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .chyba{ background:#31170e; color:var(--cerv); border:1px solid var(--cerv); border-radius:12px; padding:8px 12px; font-size:13px; text-align:center; margin-top:12px; }
+    .ok{ background:#1c2416; color:var(--zelena); border:1px solid var(--zelena); border-radius:12px; padding:8px 12px; font-size:13px; text-align:center; margin-top:12px; }
+    code{ background:var(--pozadi); padding:1px 5px; border-radius:6px; font-size:12px; word-break:break-all; }
+    a{ color:var(--lezak); }
+    .hlava{ display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px; }
+    .hlava .nazev{ font-weight:700; font-size:16px; }
+    ol{ padding-left:20px; } li{ margin-bottom:8px; }
+  </style>
+</head>
+<body>
+  <div class="obal">
+    <div class="titul">PIVNÍ POČÍTADLO</div>
+    <div class="podtitul">administrace</div>
+    <div id="app"><div class="karta kour">Načítám…</div></div>
+  </div>
+
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+  <script>
+  "use strict";
+
+  /* ===================== KONFIGURACE ===================== */
+  /* Sem vlož celý firebaseConfig z konzole (Project settings -> Web app). */
+  const firebaseConfig = {
+    apiKey: "SEM_VLOZ",
+    authDomain: "pivni-pocitacka.firebaseapp.com",
+    databaseURL: "https://pivni-pocitacka-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "pivni-pocitacka",
+    appId: "SEM_VLOZ"
+  };
+
+  const ADMIN_EMAILS = ["gabr.kova@gmail.com"];  // seznam adminů (UI brána; ostrá brána je v pravidlech DB)
+  const PARTA = "nase-parta";
+  /* ======================================================= */
+
+  const DB = String(firebaseConfig.databaseURL || "").replace(/\/+$/, "");
+  const jeNastaveno = !JSON.stringify(firebaseConfig).includes("SEM_VLOZ");
+
+  let auth = null, uzivatel = null, chyba = "", info = "";
+  let aktivni = null;       // {pole:[{name,count}], celkem}
+  let archivSeznam = null;  // [{id, nazev, kdy, pole, celkem}]
+  let nahled = null;        // {nazev, kdy, pole, celkem}
+  let pracuji = false;
+
+  const slug = (s) => (s || "").toLowerCase().normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "akce";
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+  const sklonuj = (n) => (n === 1 ? "pivo" : n >= 2 && n <= 4 ? "piva" : "piv");
+  const fmtDatum = (t) => { try { return new Date(t).toLocaleString("cs-CZ"); } catch (e) { return ""; } };
+
+  /* Z uzlu (objektu hráčů) udělá seřazený žebříček, přeskočí služební klíče "_" */
+  function zebricekZ(uzel) {
+    const pole = Object.entries(uzel || {})
+      .filter(([k]) => k.charAt(0) !== "_")
+      .map(([k, v]) => ({ name: String((v && v.name) || k), count: Math.max(0, (v && typeof v.count === "number") ? v.count : 0) }));
+    pole.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "cs"));
+    const celkem = pole.reduce((s, r) => s + r.count, 0);
+    return { pole, celkem };
+  }
+
+  function exportCsv(pole, nazevSouboru) {
+    const hlav = "Jméno;Počet piv;Litry";
+    const radky = pole.map((p) => '"' + String(p.name).replace(/"/g, '""') + '";' + p.count + ";" + (p.count * 0.5).toString().replace(".", ","));
+    const csv = "\uFEFF" + [hlav].concat(radky).join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = nazevSouboru; document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1500);
+  }
+
+  const jeAdmin = () => uzivatel && ADMIN_EMAILS.indexOf((uzivatel.email || "").toLowerCase()) >= 0;
+
+  /* ---------- data ---------- */
+  async function nactiAktivni() {
+    const r = await fetch(DB + "/pivo/" + PARTA + ".json?v=" + Date.now(), { cache: "no-store" });
+    const d = await r.json();
+    aktivni = zebricekZ(d || {});
+  }
+
+  async function nactiArchiv() {
+    const r = await fetch(DB + "/pivo/archiv.json?v=" + Date.now(), { cache: "no-store" });
+    const d = await r.json() || {};
+    archivSeznam = Object.entries(d).map(([id, v]) => {
+      const z = zebricekZ((v && v.data) || {});
+      return { id, nazev: (v && v.nazev) || id, kdy: (v && v.archivovanoKdy) || null, pole: z.pole, celkem: z.celkem };
+    }).sort((a, b) => (b.kdy || 0) - (a.kdy || 0));
+  }
+
+  async function archivuj() {
+    const el = document.getElementById("nazev-akce");
+    const nazev = ((el && el.value) || "").trim().slice(0, 60);
+    if (!nazev) { chyba = "Zadej název akce, pod kterým se archiv uloží."; render(); return; }
+    if (!window.confirm('Archivovat aktuální akci jako „' + nazev + '" a začít evidenci nanovo?\n\nAktuální tabule se vyprázdní. Data zůstanou v archivu.')) return;
+    pracuji = true; chyba = ""; info = ""; render();
+    try {
+      const token = await uzivatel.getIdToken();
+      const snap = await (await fetch(DB + "/pivo/" + PARTA + ".json?v=" + Date.now(), { cache: "no-store" })).json();
+      const id = slug(nazev) + "-" + Date.now();
+      const zapisArchiv = await fetch(DB + "/pivo/archiv/" + id + ".json?auth=" + encodeURIComponent(token), {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nazev: nazev, archivovanoKdy: Date.now(), archivoval: uzivatel.email, data: snap || {} })
+      });
+      if (!zapisArchiv.ok) throw new Error("archiv " + zapisArchiv.status);
+      // vynulovat aktivní tabuli a bumpnout epochu (telefony se srovnají na 0)
+      const reset = await fetch(DB + "/pivo/" + PARTA + ".json", {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ _epoch: Date.now() })
+      });
+      if (!reset.ok) throw new Error("reset " + reset.status);
+      info = 'Akce „' + nazev + '" archivována, evidence začíná nanovo.';
+      await nactiAktivni(); await nactiArchiv();
+    } catch (e) {
+      chyba = "Archivace se nepovedla (" + e.message + "). Zkontroluj pravidla DB a oprávnění.";
+    }
+    pracuji = false; render();
+  }
+
+  /* ---------- přihlášení ---------- */
+  function prihlasit() {
+    chyba = "";
+    const p = new firebase.auth.GoogleAuthProvider();
+    auth.signInWithPopup(p).catch((e) => { chyba = "Přihlášení se nepovedlo: " + e.message; render(); });
+  }
+  function odhlasit() { auth.signOut(); nahled = null; }
+
+  /* ---------- vykreslení ---------- */
+  function zebricekHtml(pole) {
+    if (!pole.length) return '<div class="male kour" style="text-align:center;padding:10px 0;">Zatím prázdné.</div>';
+    return pole.map((r, i) =>
+      '<div class="radek"><div class="jmeno-text">' + (i + 1) + ". " + esc(r.name) + "</div><div style=\"font-weight:700;\">" + r.count + "</div></div>"
+    ).join("");
+  }
+
+  function render() {
+    const app = document.getElementById("app");
+    const pruh = (chyba ? '<div class="chyba">' + esc(chyba) + "</div>" : "") + (info ? '<div class="ok">' + esc(info) + "</div>" : "");
+
+    if (!jeNastaveno) {
+      app.innerHTML =
+        '<div class="karta"><div style="font-weight:700;font-size:17px;margin-bottom:8px;">Admin ještě není nastaven 🔧</div>' +
+        '<div class="male kour">Do souboru <code>admin.html</code> je potřeba vložit <code>firebaseConfig</code> z konzole a nastavit Google přihlášení. Postup je v komentáři na začátku souboru:</div>' +
+        '<ol class="male" style="margin-top:8px;">' +
+          "<li>Authentication → Sign-in method → zapni <b>Google</b>.</li>" +
+          "<li>Authentication → Settings → Authorized domains → přidej <code>gabrkova.github.io</code>.</li>" +
+          "<li>Project settings → Web app → zkopíruj <code>firebaseConfig</code> a vlož do souboru.</li>" +
+          "<li>Realtime Database → Rules → vlož pravidla ze souboru a Publish.</li>" +
+        "</ol></div>";
+      return;
+    }
+
+    if (!uzivatel) {
+      app.innerHTML = pruh +
+        '<div class="karta" style="text-align:center;">' +
+        '<div class="kour male" style="margin-bottom:14px;">Přihlas se svým Google účtem.</div>' +
+        '<button class="btn" onclick="prihlasit()">Přihlásit se přes Google</button></div>';
+      return;
+    }
+
+    if (!jeAdmin()) {
+      app.innerHTML = pruh +
+        '<div class="karta" style="text-align:center;">' +
+        '<div style="margin-bottom:8px;">Přihlášen: <b>' + esc(uzivatel.email || "") + "</b></div>" +
+        '<div class="cerv male" style="color:var(--cerv);margin-bottom:14px;">Tento účet nemá administrátorské oprávnění.</div>' +
+        '<button class="btn sek" onclick="odhlasit()">Odhlásit</button></div>';
+      return;
+    }
+
+    // Náhled archivované akce (jen čtení)
+    if (nahled) {
+      app.innerHTML = pruh +
+        '<div class="karta"><div class="hlava"><div class="nazev">' + esc(nahled.nazev) + "</div>" +
+          '<button class="btn sek" onclick="zavriNahled()">← Zpět</button></div>' +
+          '<div class="male kour" style="margin-bottom:8px;">Archivováno ' + fmtDatum(nahled.kdy) + " · " + nahled.celkem + " " + sklonuj(nahled.celkem) + " · " + (nahled.celkem * 0.5).toLocaleString("cs-CZ") + " l · jen ke čtení</div>" +
+          zebricekHtml(nahled.pole) +
+          '<div style="margin-top:12px;"><button class="btn sek" onclick="exportNahled()">⬇ Export (CSV)</button></div>' +
+        "</div>";
+      return;
+    }
+
+    const a = aktivni || { pole: [], celkem: 0 };
+    const arch = archivSeznam || [];
+    app.innerHTML = pruh +
+      // Hlava s uživatelem
+      '<div class="karta"><div class="hlava"><div class="male">Admin: <b>' + esc(uzivatel.email || "") + "</b></div>" +
+        '<button class="btn sek" onclick="odhlasit()">Odhlásit</button></div>' +
+        '<div class="male kour">Aktivní akce běží na <code>' + PARTA + "</code>.</div></div>" +
+
+      // Aktivní akce
+      '<div class="karta"><div class="hlava"><div class="nazev">Aktivní akce</div>' +
+        '<button class="btn sek" onclick="obnovVse()">Obnovit</button></div>' +
+        '<div class="male kour" style="margin-bottom:8px;">' + a.pole.length + " lidí · " + a.celkem + " " + sklonuj(a.celkem) + " · " + (a.celkem * 0.5).toLocaleString("cs-CZ") + " l</div>" +
+        zebricekHtml(a.pole) +
+        '<div style="margin-top:12px;"><button class="btn sek" onclick="exportAktivni()">⬇ Export (CSV)</button></div>' +
+      "</div>" +
+
+      // Archivace
+      '<div class="karta"><div class="nazev" style="margin-bottom:8px;">Archivovat a začít nanovo</div>' +
+        '<div class="male kour" style="margin-bottom:10px;">Uloží aktuální tabuli do archivu a vyprázdní ji pro novou akci. Telefonům se počítadlo srovná na nulu.</div>' +
+        '<input id="nazev-akce" class="pole" maxlength="60" placeholder="Název akce (např. Tatanice 2026)" style="margin-bottom:10px;" />' +
+        '<button class="btn nebezpeci" onclick="archivuj()"' + (pracuji ? " disabled" : "") + ">" + (pracuji ? "Pracuji…" : "Archivovat akci") + "</button>" +
+      "</div>" +
+
+      // Archiv
+      '<div class="karta"><div class="nazev" style="margin-bottom:8px;">Archiv akcí</div>' +
+        (arch.length === 0
+          ? '<div class="male kour" style="text-align:center;padding:8px 0;">Zatím žádná archivovaná akce.</div>'
+          : arch.map((x) =>
+              '<div class="radek"><div style="min-width:0;"><div class="jmeno-text" style="font-weight:600;">' + esc(x.nazev) + "</div>" +
+                '<div class="male kour">' + fmtDatum(x.kdy) + " · " + x.celkem + " " + sklonuj(x.celkem) + "</div></div>" +
+                '<button class="btn sek" onclick="otevriNahled(\'' + esc(x.id) + '\')">Zobrazit</button></div>'
+            ).join("")) +
+      "</div>";
+  }
+
+  /* ---------- akce z UI ---------- */
+  function exportAktivni() { if (aktivni) exportCsv(aktivni.pole, "aktivni-akce-" + new Date().toISOString().slice(0, 10) + ".csv"); }
+  function otevriNahled(id) { const x = (archivSeznam || []).find((y) => y.id === id); if (x) { nahled = x; render(); } }
+  function zavriNahled() { nahled = null; render(); }
+  function exportNahled() { if (nahled) exportCsv(nahled.pole, slug(nahled.nazev) + ".csv"); }
+  async function obnovVse() { chyba = ""; info = ""; try { await nactiAktivni(); await nactiArchiv(); } catch (e) { chyba = "Načtení selhalo: " + e.message; } render(); }
+
+  /* ---------- start ---------- */
+  (function start() {
+    if (!jeNastaveno) { render(); return; }
+    try {
+      firebase.initializeApp(firebaseConfig);
+      auth = firebase.auth();
+      auth.onAuthStateChanged(async (u) => {
+        uzivatel = u; nahled = null; chyba = "";
+        if (u && jeAdmin()) { try { await nactiAktivni(); await nactiArchiv(); } catch (e) { chyba = "Načtení selhalo: " + e.message; } }
+        render();
+      });
+    } catch (e) {
+      chyba = "Firebase se nepodařilo spustit: " + e.message; render();
+    }
+  })();
+  </script>
+</body>
+</html>
