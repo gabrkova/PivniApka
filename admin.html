@@ -91,6 +91,25 @@ NASTAVENÍ (Firebase konzole, projekt pivni-pocitacka):
     code{ background:var(--pozadi); padding:1px 5px; border-radius:6px; font-size:12px; word-break:break-all; }
     ol{ padding-left:20px; } li{ margin-bottom:8px; }
     .hlavaKarty{ display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px; }
+
+    /* --- sekce Akce (modernizace) --- */
+    .akce-radek{ padding:14px 0; border-top:1px solid rgba(255,255,255,.07); }
+    .akce-radek:first-of-type{ border-top:none; }
+    .akce-top{ display:flex; align-items:flex-start; gap:10px; }
+    .akce-nazev{ font-weight:700; font-size:16px; display:flex; align-items:center; gap:7px; min-width:0; flex:1; }
+    .akce-nazev.akt{ color:var(--lezak); }
+    .akce-nazev .txt{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .ikona{ display:inline-flex; align-items:center; color:var(--lezak); flex:none; }
+    .ikona.zamek{ color:#caa25c; }
+    .meta{ color:var(--kour); font-size:12px; margin-top:3px; }
+    .akce-bar{ display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+    .menu-obal{ position:relative; flex:none; }
+    .kebab{ width:34px; height:34px; border-radius:10px; border:1px solid var(--okraj); background:transparent; color:var(--kour); display:inline-flex; align-items:center; justify-content:center; cursor:pointer; }
+    .kebab:hover{ color:var(--pena); border-color:var(--mosaz); }
+    .menu{ position:absolute; right:0; top:40px; z-index:20; background:#2a1c0c; border:1px solid var(--okraj); border-radius:12px; padding:6px; min-width:170px; box-shadow:0 12px 26px rgba(0,0,0,.55); }
+    .menu button{ display:block; width:100%; text-align:left; background:transparent; color:var(--pena); padding:9px 10px; border-radius:8px; font-size:14px; border:none; cursor:pointer; }
+    .menu button:hover{ background:rgba(255,255,255,.06); }
+    .overlay{ position:fixed; inset:0; z-index:10; background:transparent; }
   </style>
 </head>
 <body>
@@ -126,6 +145,11 @@ NASTAVENÍ (Firebase konzole, projekt pivni-pocitacka):
   let akce = {};          // { id: {nazev, zalozeno, hraci, _log} }
   let legacy = null;      // {naseParta, archiv} když existují stará data k importu
   let nahledId = null;
+  let menuId = null;      // id akce s otevřeným kebab menu
+
+  const SVG_STAR = '<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M12 2.6l2.7 5.9 6.4.6-4.8 4.3 1.4 6.3L12 16.9 6.3 19.7l1.4-6.3L2.9 9.1l6.4-.6z"/></svg>';
+  const SVG_LOCK = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.5" y="10.5" width="15" height="9.5" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg>';
+  const SVG_KEBAB = '<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>';
 
   const slug = (s) => (s || "").toLowerCase().normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "akce";
@@ -210,6 +234,7 @@ NASTAVENÍ (Firebase konzole, projekt pivni-pocitacka):
   }
 
   async function prejmenuj(id) {
+    menuId = null;
     const stary = (akce[id] && akce[id].nazev) || "";
     const novy = window.prompt("Nový název akce:", stary);
     if (novy === null) return;
@@ -295,11 +320,15 @@ NASTAVENÍ (Firebase konzole, projekt pivni-pocitacka):
   function odhlasit() { nahledId = null; auth.signOut(); }
 
   /* ---------- UI akce ---------- */
-  function otevriNahled(id) { nahledId = id; render(); }
+  function otevriNahled(id) { menuId = null; nahledId = id; render(); }
   function zavriNahled() { nahledId = null; render(); }
+  function prepniMenu(id) { menuId = (menuId === id) ? null : id; render(); }
+  function zavriMenu() { menuId = null; render(); }
   function exportAkce(id) {
-    const a = akce[id]; if (!a) return;
+    menuId = null;
+    const a = akce[id]; if (!a) { render(); return; }
     exportCsv(hraciZ(a.hraci || {}), "pivo-" + slug(a.nazev || id) + ".csv");
+    render();
   }
   async function obnovVse() { chyba = ""; info = ""; try { await nactiVse(); } catch (e) { chyba = "Načtení selhalo: " + e.message; } render(); }
 
@@ -346,7 +375,7 @@ NASTAVENÍ (Firebase konzole, projekt pivni-pocitacka):
 
     const idy = Object.keys(akce).sort((x, y) => ((akce[y] && akce[y].zalozeno) || 0) - ((akce[x] && akce[x].zalozeno) || 0));
 
-    let html = pruh +
+    let html = pruh + (menuId ? '<div class="overlay" onclick="zavriMenu()"></div>' : '') +
       '<div class="karta"><div class="hlavaKarty"><div class="male">Admin: <b>' + esc(uzivatel.email || "") + "</b></div>" +
         '<button class="btn sek mini" onclick="odhlasit()">Odhlásit</button></div>' +
         '<div class="male kour">Aktuální akce: ' + (aktivniId && akce[aktivniId] ? "<b>" + esc(akce[aktivniId].nazev || aktivniId) + "</b>" : "<i>žádná</i>") + "</div></div>";
@@ -373,18 +402,30 @@ NASTAVENÍ (Firebase konzole, projekt pivni-pocitacka):
         const c = soucet(pole);
         const jeAkt = id === aktivniId;
         const odem = (a.odemcena !== false);
-        return '<div class="polozka"><div class="hlava"><div style="min-width:0;">' +
-          '<div class="nazevAkce">' + esc(a.nazev || id) +
-            (jeAkt ? '<span class="odznak">AKTUÁLNÍ</span>' : "") +
-            (odem ? "" : '<span class="odznak" style="background:#5b4a2a;color:var(--pena);">🔒 ZAMČENO</span>') + "</div>" +
-          '<div class="male kour">' + fmtDatum(a.zalozeno) + " · " + pole.length + " lidí · " + c + " " + sklonuj(c) + "</div></div></div>" +
-          '<div class="tlacitka">' +
-            (jeAkt ? "" : '<button class="btn mini" onclick="nastavAktualni(\'' + esc(id) + '\')">Nastavit jako aktuální</button>') +
-            '<button class="btn sek mini" onclick="prepniZamek(\'' + esc(id) + '\')">' + (odem ? "Zamknout" : "Odemknout") + "</button>" +
-            '<button class="btn sek mini" onclick="otevriNahled(\'' + esc(id) + '\')">Zobrazit</button>' +
-            '<button class="btn sek mini" onclick="prejmenuj(\'' + esc(id) + '\')">Přejmenovat</button>' +
-            '<button class="btn sek mini" onclick="exportAkce(\'' + esc(id) + '\')">Export</button>' +
-          "</div></div>";
+        const ikony =
+          (jeAkt ? '<span class="ikona" title="Aktuální akce">' + SVG_STAR + "</span>" : "") +
+          (odem ? "" : '<span class="ikona zamek" title="Uzamčeno – jen ke čtení">' + SVG_LOCK + "</span>");
+        const menuHtml = (menuId === id)
+          ? '<div class="menu">' +
+              '<button onclick="otevriNahled(\'' + esc(id) + '\')">Zobrazit</button>' +
+              '<button onclick="prejmenuj(\'' + esc(id) + '\')">Přejmenovat</button>' +
+              '<button onclick="exportAkce(\'' + esc(id) + '\')">Export CSV</button>' +
+            "</div>"
+          : "";
+        return '<div class="akce-radek">' +
+            '<div class="akce-top">' +
+              '<div class="akce-nazev' + (jeAkt ? " akt" : "") + '">' + ikony + '<span class="txt">' + esc(a.nazev || id) + "</span></div>" +
+              '<div class="menu-obal">' +
+                '<button class="kebab" title="Další akce" onclick="prepniMenu(\'' + esc(id) + '\')">' + SVG_KEBAB + "</button>" +
+                menuHtml +
+              "</div>" +
+            "</div>" +
+            '<div class="meta">' + fmtDatum(a.zalozeno) + " · " + pole.length + " lidí · " + c + " " + sklonuj(c) + "</div>" +
+            '<div class="akce-bar">' +
+              (jeAkt ? "" : '<button class="btn mini" onclick="nastavAktualni(\'' + esc(id) + '\')">Nastavit jako aktuální</button>') +
+              '<button class="btn sek mini" onclick="prepniZamek(\'' + esc(id) + '\')">' + (odem ? "Zamknout" : "Odemknout") + "</button>" +
+            "</div>" +
+          "</div>";
       }).join("");
     }
     html += "</div>";
