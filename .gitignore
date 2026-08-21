@@ -1,0 +1,30 @@
+# === OS ===
+.DS_Store
+Thumbs.db
+desktop.ini
+~$*
+
+# === Editory / IDE ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# === Node / build (kdyby přibyl nástroj) ===
+node_modules/
+dist/
+build/
+.cache/
+
+# === Prostředí a tajné klíče ===
+.env
+.env.*
+*.local
+serviceAccountKey.json
+firebase-debug.log
+.firebase/
+
+# === Logy a dočasné soubory ===
+*.log
+tmp/
