@@ -1,0 +1,4 @@
+# Normalizace konců řádků — v repu i pracovním stromu LF (řeší CRLF tření z OneDrive/editoru)
+* text=auto eol=lf
+*.html text eol=lf
+*.md   text eol=lf
