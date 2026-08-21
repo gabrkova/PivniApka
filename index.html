@@ -55,7 +55,7 @@ Pravidla databáze musí odpovídat tomuto modelu – viz hlavička admin.html.
     }
     .hlavni:disabled{ opacity:.4; }
     .pipa{
-      width:158px; height:158px; border-radius:999px; margin-top:6px;
+      width:158px; height:158px; border-radius:999px; margin-top:2px;
       background:radial-gradient(circle at 32% 26%, #ffd97e, var(--lezak) 46%, var(--lezak-tmavy));
       border:5px solid var(--mosaz); color:#241503;
       box-shadow:0 12px 26px rgba(0,0,0,.55), inset 0 -10px 18px rgba(0,0,0,.28), inset 0 6px 10px rgba(255,255,255,.25);
@@ -63,7 +63,14 @@ Pravidla databáze musí odpovídat tomuto modelu – viz hlavička admin.html.
     }
     .pipa .emoji{ font-size:42px; line-height:1; }
     .pipa .napis{ font-family:'Alfa Slab One',serif; font-size:24px; margin-top:2px; }
+    .pipa-obsah{ display:flex; align-items:center; gap:6px; }
+    .pipa-obsah .plus1{ font-family:'Alfa Slab One',serif; font-size:44px; line-height:1; }
+    .pipa-obsah .pivo-ikona{ font-size:56px; line-height:1; }
     .cislo{ font-family:'Alfa Slab One',serif; font-size:56px; line-height:1.1; }
+    .cislo-des{ font-size:0.25em; opacity:.6; }
+    .pocet-text{ font-size:24px; font-weight:700; margin:2px 0 14px; text-align:center; line-height:1.3; }
+    .poc-cislo{ color:var(--lezak); }
+    .poc-slovo{ font-size:0.7em; color:var(--kour); font-weight:600; }
     .oprava{ margin-top:14px; border:1px solid var(--okraj); color:var(--kour); border-radius:999px; padding:8px 16px; font-size:13px; }
     .oprava:disabled{ opacity:.3; }
     .radek-souhrn{ display:flex; justify-content:space-between; align-items:center; padding:12px 20px; }
@@ -92,6 +99,12 @@ Pravidla databáze musí odpovídat tomuto modelu – viz hlavička admin.html.
     .paticka .ne{ color:var(--kour); font-weight:700; text-decoration:none; }
     ol{ padding-left:20px; margin:8px 0; } li{ margin-bottom:8px; }
     code{ background:var(--pozadi); padding:1px 5px; border-radius:6px; font-size:12px; word-break:break-all; }
+    .tacek-band{ display:flex; align-items:center; justify-content:space-between; gap:8px; width:100%; }
+    .info-vlevo{ flex:1 1 0; min-width:0; font-size:12px; color:var(--kour); display:flex; flex-direction:column; gap:5px; align-items:flex-start; }
+    .tacek-stred{ flex:none; display:flex; flex-direction:column; align-items:center; }
+    .vyber-vpravo{ flex:1 1 0; display:flex; flex-direction:column; gap:9px; align-items:flex-end; }
+    .pill{ border-radius:999px; padding:10px 16px; font-size:16px; font-weight:700; background:var(--pozadi); border:1px solid var(--okraj); color:var(--kour); cursor:pointer; white-space:nowrap; }
+    .pill.akt{ background:linear-gradient(180deg, var(--lezak), var(--lezak-tmavy)); color:#241503; border-color:var(--mosaz); }
     @media (prefers-reduced-motion: reduce){
       *{ transition:none !important; }
       button:active{ transform:none; }
@@ -113,7 +126,6 @@ const DB_URL = "https://pivni-pocitacka-default-rtdb.europe-west1.firebasedataba
 const LOG_ZOBRAZIT = 25;
 /* ============================================================= */
 
-const MEDAILE = ["🥇", "🥈", "🥉"];
 const zaklad = String(DB_URL).replace(/\/+$/, "");
 const nastaveno = /^https:\/\//.test(zaklad) && !zaklad.includes("SEM-VLOZ");
 
@@ -121,8 +133,11 @@ let faze = "start";        // setup | zadnaAkce | jmeno | hraje
 let akceId = null;
 let akceNazev = "";
 let odemceno = true;       // false = akce je uzamčená (jen ke čtení)
+let velikosti = ["0.5"];   // povolené velikosti piv v aktivní akci
 let jmeno = "";
-let mujPocet = 0;
+let mujPocet = 0;          // moje piva celkem (kusů, součet přes velikosti)
+let mujPocty = {};         // moje piva po velikostech: { "0.5": n, ... }
+let vybranaVelikost = null; // aktuálně vybraná velikost pro tácek (klik = +1 této velikosti)
 let radky = {};            // hraci aktivní akce: { slug: {name, count, updatedAt} }
 let logData = {};          // _log aktivní akce
 let chyba = "";
@@ -146,11 +161,68 @@ const fmtCas = (t) => {
 const urlAktivni = () => zaklad + "/pivo/aktivni.json";
 const urlAkce = (cesta) => zaklad + "/pivo/akce/" + akceId + cesta + ".json";
 
+/* ---------- velikosti piv a počty ---------- */
+const VELIKOSTI_VSE = ["0.5", "0.3"];
+const VEL_NAZEV = { "0.5": "velké", "0.3": "malé" };
+const velLabel = (kod) => VEL_NAZEV[kod] || (String(kod).replace(".", ",") + " l");
+const fmtL = (n) => (Math.round(n * 100) / 100).toLocaleString("cs-CZ");
+function velikostiZ(node) {
+  let v = node && node.velikosti, arr = [];
+  if (Array.isArray(v)) arr = v.map(String);
+  else if (v && typeof v === "object") arr = Object.values(v).map(String);
+  arr = VELIKOSTI_VSE.filter((k) => arr.indexOf(k) >= 0);
+  return arr.length ? arr : ["0.5"];
+}
+function poctyZ(rec) {
+  const p = {};
+  if (rec && rec.pocty && typeof rec.pocty === "object") {
+    for (const k in rec.pocty) { const n = rec.pocty[k]; if (typeof n === "number" && n > 0) p[k] = n; }
+  } else if (rec && typeof rec.count === "number" && rec.count > 0) {
+    p["0.5"] = rec.count;
+  }
+  return p;
+}
+const celkemKusu = (p) => Object.keys(p || {}).reduce((s, k) => s + (p[k] || 0), 0);
+const litryZ = (p) => Object.keys(p || {}).reduce((s, k) => s + parseFloat(k) * (p[k] || 0), 0);
+const pivaZ = (p) => litryZ(p) / 0.5;   // 1 pivo = 0,5 l (spravedlivé skóre napříč velikostmi)
+const pivaLabel = (x) => (Number.isInteger(x) ? sklonuj(x) : "piva");
+function cisloHtml(x) {
+  const s = fmtL(x);
+  const i = s.indexOf(",");
+  return (i < 0) ? s : s.slice(0, i) + '<span class="cislo-des">' + s.slice(i) + "</span>";
+}
+function pocetText(pocty) {
+  const casti = velikosti.filter((s) => (pocty[s] || 0) > 0).map((s) => {
+    const n = pocty[s];
+    let nazev;
+    if (s === "0.5") nazev = (n >= 5 ? "velkých" : "velké");
+    else if (s === "0.3") nazev = (n >= 5 ? "malých" : "malé");
+    else nazev = velLabel(s);
+    return '<span class="poc-cislo">' + n + '</span> <span class="poc-slovo">' + nazev + "</span>";
+  });
+  return casti.length ? casti.join(' <span class="poc-slovo">a</span> ') : '<span class="poc-slovo">0 piv</span>';
+}
+function pocetZkratka(pocty) {
+  const casti = velikosti.filter((s) => (pocty[s] || 0) > 0).map((s) => {
+    if (s === "0.5") return String(pocty[s]);
+    if (s === "0.3") return pocty[s] + "m";
+    return pocty[s] + " " + velLabel(s);
+  });
+  return casti.length ? casti.join(" + ") : "0";
+}
+
 function jmenoLokalne(n) {
   try {
     if (n === null) localStorage.removeItem("pivo_jmeno");
     else if (n !== undefined) localStorage.setItem("pivo_jmeno", n);
     return localStorage.getItem("pivo_jmeno") || "";
+  } catch (e) { return ""; }
+}
+
+function velikostLokalne(n) {
+  try {
+    if (n !== undefined) localStorage.setItem("pivo_velikost", n);
+    return localStorage.getItem("pivo_velikost") || "";
   } catch (e) { return ""; }
 }
 
@@ -174,13 +246,16 @@ async function nacti(tiche) {
       const node = await (await fetch(urlAkce("") + "?v=" + Date.now(), { cache: "no-store" })).json() || {};
       akceNazev = (node && node.nazev) ? String(node.nazev) : "Aktuální akce";
       odemceno = !(node && node.odemcena === false);
+      velikosti = velikostiZ(node);
+      const ulozV = velikostLokalne();
+      vybranaVelikost = (velikosti.indexOf(ulozV) >= 0) ? ulozV : velikosti[0];
       radky = (node && typeof node.hraci === "object" && node.hraci) ? node.hraci : {};
       logData = (node && typeof node._log === "object" && node._log) ? node._log : {};
 
       if (jmeno) {
         const muj = radky[slug(jmeno)];
-        if (novaAkce) mujPocet = (muj && typeof muj.count === "number") ? Math.max(0, muj.count) : 0;
-        else if (!ukladam && !ceka) { if (muj && typeof muj.count === "number") mujPocet = Math.max(0, muj.count); }
+        if (novaAkce || (!ukladam && !ceka)) mujPocty = poctyZ(muj);
+        mujPocet = celkemKusu(mujPocty);
         faze = "hraje";
       } else {
         faze = "jmeno";
@@ -201,7 +276,7 @@ async function uloz() {
   try {
     const r = await fetch(urlAkce("/hraci/" + slug(jmeno)), {
       method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: jmeno, count: mujPocet, updatedAt: Date.now() })
+      body: JSON.stringify({ name: jmeno, count: celkemKusu(mujPocty), pocty: mujPocty, updatedAt: Date.now() })
     });
     if (!r.ok) throw new Error(r.status);
     chyba = "";
@@ -214,29 +289,47 @@ async function uloz() {
   else nacti(true);
 }
 
-async function zapisLog(delta) {
+async function zapisLog(delta, size) {
   if (!akceId) return;
   try {
     await fetch(urlAkce("/_log"), {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: jmeno, delta: delta, count: mujPocet, t: Date.now() })
+      body: JSON.stringify({ name: jmeno, delta: delta, size: size, count: mujPocet, t: Date.now() })
     });
     nacti(true);
   } catch (e) { /* log není kritický */ }
 }
 
 /* ---------- akce z UI ---------- */
-function pridej() { if (!odemceno) return; mujPocet++; render(); uloz(); zapisLog(1); }
-function uber() { if (!odemceno || mujPocet <= 0) return; mujPocet--; render(); uloz(); zapisLog(-1); }
+function pridej(size) {
+  if (!odemceno || velikosti.indexOf(size) < 0) return;
+  mujPocty[size] = (mujPocty[size] || 0) + 1;
+  mujPocet = celkemKusu(mujPocty);
+  render(); uloz(); zapisLog(1, size);
+}
+function uber(size) {
+  if (!odemceno || !(mujPocty[size] > 0)) return;
+  mujPocty[size] = mujPocty[size] - 1;
+  if (mujPocty[size] <= 0) delete mujPocty[size];
+  mujPocet = celkemKusu(mujPocty);
+  render(); uloz(); zapisLog(-1, size);
+}
+
+function vyberVelikost(size) {
+  if (velikosti.indexOf(size) < 0) return;
+  vybranaVelikost = size;
+  velikostLokalne(size);
+  render();
+}
 
 async function prihlas() {
   const el = document.getElementById("vstup");
   const n = ((el && el.value) || "").trim().slice(0, 24);
   if (!n || !akceId) return;
-  jmeno = n; jmenoLokalne(n); faze = "hraje"; mujPocet = 0; render();
+  jmeno = n; jmenoLokalne(n); faze = "hraje"; mujPocty = {}; mujPocet = 0; render();
   try {
     const r = await fetch(urlAkce("/hraci/" + slug(n)));
-    if (r.ok) { const d = await r.json(); if (d && typeof d.count === "number") mujPocet = Math.max(0, d.count); }
+    if (r.ok) { const d = await r.json(); mujPocty = poctyZ(d); mujPocet = celkemKusu(mujPocty); }
   } catch (e) {}
   if (odemceno) { if (mujPocet === 0) uloz(); else render(); }
   else render();
@@ -259,30 +352,45 @@ async function ulozNoveJmeno() {
   const nove = ((el && el.value) || "").trim().slice(0, 24);
   if (!nove || nove === jmeno || !akceId) { prejmenovani = false; render(); return; }
   const staryS = slug(jmeno), novyS = slug(nove);
-  let soucet = mujPocet;
+  let poctyNove = Object.assign({}, mujPocty);
   try {
     if (novyS !== staryS) {
       const r = await fetch(urlAkce("/hraci/" + novyS));
-      if (r.ok) { const d = await r.json(); if (d && typeof d.count === "number") soucet += Math.max(0, d.count); }
+      if (r.ok) { const d = await r.json(); const cizi = poctyZ(d); for (const k in cizi) poctyNove[k] = (poctyNove[k] || 0) + cizi[k]; }
     }
+    const celk = celkemKusu(poctyNove);
     await fetch(urlAkce("/hraci/" + novyS), {
       method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: nove, count: soucet, updatedAt: Date.now() })
+      body: JSON.stringify({ name: nove, count: celk, pocty: poctyNove, updatedAt: Date.now() })
     });
     if (novyS !== staryS) { try { await fetch(urlAkce("/hraci/" + staryS), { method: "DELETE" }); } catch (e) {} }
-    jmeno = nove; jmenoLokalne(nove); mujPocet = soucet; chyba = "";
+    jmeno = nove; jmenoLokalne(nove); mujPocty = poctyNove; mujPocet = celk; chyba = "";
   } catch (e) {
     chyba = "Přejmenování se nepovedlo — zkus to za chvíli.";
   }
   prejmenovani = false; render(); nacti(true);
 }
 
-/* (iii) export žebříčku do CSV */
+/* (iii) export žebříčku do CSV (rozpad po velikostech) */
 function exportCsv() {
-  const pole = seznam();
-  const hlav = "Jméno;Počet piv;Litry";
-  const radkyCsv = pole.map((p) =>
-    '"' + String(p.name).replace(/"/g, '""') + '";' + p.count + ";" + (p.count * 0.5).toString().replace(".", ","));
+  const vel = velikosti.slice();
+  const lidi = Object.entries(radky || {})
+    .filter(([s]) => s.charAt(0) !== "_")
+    .map(([s, d]) => ({ slug: s, name: String((d && d.name) || s), pocty: poctyZ(d) }));
+  if (jmeno && faze === "hraje") {
+    const s = slug(jmeno);
+    const i = lidi.findIndex((x) => x.slug === s);
+    if (i >= 0) { lidi[i].name = jmeno; lidi[i].pocty = mujPocty; }
+    else lidi.push({ slug: s, name: jmeno, pocty: mujPocty });
+  }
+  lidi.sort((a, b) => pivaZ(b.pocty) - pivaZ(a.pocty) || a.name.localeCompare(b.name, "cs"));
+  const hlav = ["Jméno"].concat(vel.map(velLabel)).concat(["Piva (0,5 l)", "Litry"]).join(";");
+  const radkyCsv = lidi.map((p) => {
+    const cols = ['"' + String(p.name).replace(/"/g, '""') + '"']
+      .concat(vel.map((s) => String(p.pocty[s] || 0)))
+      .concat([pivaZ(p.pocty).toString().replace(".", ","), litryZ(p.pocty).toString().replace(".", ",")]);
+    return cols.join(";");
+  });
   const csv = "\uFEFF" + [hlav].concat(radkyCsv).join("\r\n");
   try {
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
@@ -301,19 +409,17 @@ function obnov() { nacti(false); }
 function seznam() {
   const pole = Object.entries(radky || {})
     .filter(([s]) => s.charAt(0) !== "_")
-    .map(([s, d]) => ({
-      slug: s,
-      name: String((d && d.name) || s),
-      count: Math.max(0, (d && typeof d.count === "number") ? d.count : 0),
-      kdy: (d && d.updatedAt) || null
-    }));
+    .map(([s, d]) => {
+      const p = poctyZ(d);
+      return { slug: s, name: String((d && d.name) || s), piva: pivaZ(p), litry: litryZ(p), pocty: p, kdy: (d && d.updatedAt) || null };
+    });
   if (jmeno && faze === "hraje") {
     const s = slug(jmeno);
     const i = pole.findIndex((p) => p.slug === s);
-    if (i >= 0) { pole[i].name = jmeno; pole[i].count = mujPocet; }
-    else pole.push({ slug: s, name: jmeno, count: mujPocet, kdy: null });
+    if (i >= 0) { pole[i].name = jmeno; pole[i].piva = pivaZ(mujPocty); pole[i].litry = litryZ(mujPocty); pole[i].pocty = mujPocty; }
+    else pole.push({ slug: s, name: jmeno, piva: pivaZ(mujPocty), litry: litryZ(mujPocty), pocty: mujPocty, kdy: null });
   }
-  pole.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "cs"));
+  pole.sort((a, b) => b.piva - a.piva || a.name.localeCompare(b.name, "cs"));
   return pole;
 }
 
@@ -369,21 +475,22 @@ function render() {
 
   /* faze === "hraje" */
   const pole = seznam();
-  const celkem = pole.reduce((s, r) => s + r.count, 0);
-  const max = Math.max(1, ...pole.map((p) => p.count));
+  const celkemPiva = pole.reduce((s, r) => s + r.piva, 0);
+  const celkemLitru = pole.reduce((s, r) => s + r.litry, 0);
+  const max = Math.max(0.5, ...pole.map((p) => p.piva));
   const mujSlug = slug(jmeno);
 
   const zebricek = pole.length === 0
     ? '<div class="male kour" style="text-align:center;padding:14px 0;">Zatím nikdo nepije. Buď první! 🍺</div>'
     : pole.map((r, i) => {
         const ja = r.slug === mujSlug;
-        const znak = (i < 3 && r.count > 0) ? MEDAILE[i] : (i + 1) + ".";
-        const kdy = (r.kdy && r.count > 0) ? '<span class="male kour">' + fmtCas(r.kdy) + "</span>" : "";
+        const znak = (i + 1) + ".";
+        const kdy = (r.kdy && r.piva > 0) ? '<span class="male kour">' + fmtCas(r.kdy) + "</span>" : "";
         return '<div class="zaznam"><div class="horni">' +
           '<div class="jm"><span style="width:26px;display:inline-block;">' + znak + "</span>" +
           '<span class="jmeno-text' + (ja ? " ja" : "") + '">' + esc(r.name) + (ja ? " (já)" : "") + "</span>" + kdy + "</div>" +
-          '<div style="font-weight:700;">' + r.count + "</div></div>" +
-          '<div class="prouzek"><div style="width:' + (r.count / max * 100) + '%;"></div></div></div>';
+          '<div style="font-weight:700;white-space:nowrap;">' + pocetZkratka(r.pocty) + "</div></div>" +
+          '<div class="prouzek"><div style="width:' + (r.piva / max * 100) + '%;"></div></div></div>';
       }).join("");
 
   const udalosti = deni();
@@ -393,34 +500,53 @@ function render() {
         const kladne = (e.delta || 0) >= 0;
         const ikona = kladne ? "🍺" : "↩︎";
         const znamenko = kladne ? '<span class="plus">+1</span>' : '<span class="minus">−1</span>';
-        const stav = (typeof e.count === "number") ? " → " + e.count : "";
+        const velTxt = e.size ? " · " + velLabel(String(e.size)) : "";
         return '<div class="den-radek"><div class="kdo">' + ikona + '<span>' + esc(e.name || "?") + "</span></div>" +
-          '<div class="prawo kour">' + znamenko + stav + " · " + fmtCas(e.t) + "</div></div>";
+          '<div class="prawo kour">' + znamenko + velTxt + " · " + fmtCas(e.t) + "</div></div>";
       }).join("");
 
   const zamek = !odemceno;
+  const pivaMoje = pivaZ(mujPocty);
+  const vel = (vybranaVelikost && velikosti.indexOf(vybranaVelikost) >= 0) ? vybranaVelikost : velikosti[0];
   const bannerZamek = zamek
     ? '<div class="karta" style="text-align:center;background:#2a2410;border-color:var(--mosaz);color:var(--lezak);font-weight:700;padding:12px;">🔒 Akce je uzamčená — jen ke čtení</div>'
     : "";
-  const pipaHtml = zamek
-    ? '<div class="pipa" style="opacity:.4;filter:grayscale(.4);cursor:default;"><span class="emoji">🔒</span><span class="napis" style="font-size:18px;">ZAMČENO</span></div>'
-    : '<button class="pipa" onclick="pridej()"><span class="emoji">🍺</span><span class="napis">+1 PIVO</span></button>';
-  const opravaHtml = zamek ? "" : ('<button class="oprava" onclick="uber()"' + (mujPocet <= 0 ? " disabled" : "") + ">&minus; 1 (překlep)</button>");
+  const infoVlevo = "";
+  const partaPocty = (function () {
+    const t = {};
+    Object.entries(radky || {}).filter(([s]) => s.charAt(0) !== "_").forEach(([s, d]) => {
+      if (jmeno && faze === "hraje" && s === slug(jmeno)) return;
+      const p = poctyZ(d);
+      for (const k in p) t[k] = (t[k] || 0) + p[k];
+    });
+    if (jmeno && faze === "hraje") { for (const k in mujPocty) t[k] = (t[k] || 0) + mujPocty[k]; }
+    return t;
+  })();
+  const pocetHtml = pocetText(mujPocty);
+  const vyberHtml = (velikosti.length > 1 && !zamek)
+    ? velikosti.map((s) => '<button class="pill' + (s === vel ? " akt" : "") + '" onclick="vyberVelikost(\'' + s + '\')">' + velLabel(s) + "</button>").join("")
+    : "";
+  const tacekHtml = zamek
+    ? '<div class="pipa" style="opacity:.4;filter:grayscale(.4);cursor:default;"><span class="emoji">🔒</span><span class="napis" style="font-size:16px;">ZAMČENO</span></div>'
+    : '<button class="pipa" onclick="pridej(\'' + vel + '\')"><span class="pipa-obsah"><span class="plus1">+1</span><span class="pivo-ikona">🍺</span></span></button>';
+  const opravaHtml = zamek ? "" : ('<button class="oprava" onclick="uber(\'' + vel + '\')"' + ((mujPocty[vel] || 0) <= 0 ? " disabled" : "") + ">&minus; 1 (překlep)</button>");
 
   app.innerHTML = pruhChyby + bannerZamek +
     '<div class="karta stred">' +
-      '<div class="male kour">Na tácku má</div>' +
-      '<div style="font-weight:700;font-size:19px;">' + esc(jmeno) + "</div>" +
-      '<div class="cislo">' + mujPocet + "</div>" +
-      '<div class="male kour" style="margin:-4px 0 16px;">' + sklonuj(mujPocet) + "</div>" +
-      pipaHtml + opravaHtml +
+      '<div style="font-weight:700;font-size:27px;margin-top:2px;">' + esc(jmeno) + "</div>" +
+      '<div class="pocet-text">' + pocetHtml + "</div>" +
+      '<div class="tacek-band">' +
+        '<div class="info-vlevo">' + infoVlevo + "</div>" +
+        '<div class="tacek-stred">' + tacekHtml + opravaHtml + "</div>" +
+        '<div class="vyber-vpravo">' + vyberHtml + "</div>" +
+      "</div>" +
     "</div>" +
 
     '<div class="karta radek-souhrn" style="padding-top:12px;padding-bottom:12px;">' +
       '<div><div class="male kour" style="font-size:11px;">Parta celkem</div>' +
-      '<div style="font-weight:700;font-size:18px;">' + celkem + " " + sklonuj(celkem) + "</div></div>" +
-      '<div style="text-align:right;"><div class="male kour" style="font-size:11px;">po půllitrech</div>' +
-      '<div style="font-weight:700;font-size:18px;color:var(--lezak);">' + (celkem * 0.5).toLocaleString("cs-CZ") + " l</div></div>" +
+      '<div style="font-weight:700;font-size:17px;">' + pocetText(partaPocty) + "</div></div>" +
+      '<div style="text-align:right;"><div class="male kour" style="font-size:11px;">litrů celkem</div>' +
+      '<div style="font-weight:700;font-size:18px;color:var(--lezak);">' + fmtL(celkemLitru) + " l</div></div>" +
     "</div>" +
 
     '<div class="karta">' +
