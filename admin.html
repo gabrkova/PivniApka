@@ -174,7 +174,7 @@ NASTAVENÍ (Firebase konzole, projekt pivni-pocitacka):
   function poctyZ(rec) {
     const p = {};
     if (rec && rec.pocty && typeof rec.pocty === "object") {
-      for (const k in rec.pocty) { const n = rec.pocty[k]; if (typeof n === "number" && n > 0) p[k] = n; }
+      for (const k in rec.pocty) { const n = rec.pocty[k]; if (typeof n === "number" && n > 0) p[String(k).replace(/_/g, ".")] = n; }
     } else if (rec && typeof rec.count === "number" && rec.count > 0) {
       p["0.5"] = rec.count;
     }

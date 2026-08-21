@@ -176,12 +176,13 @@ function velikostiZ(node) {
 function poctyZ(rec) {
   const p = {};
   if (rec && rec.pocty && typeof rec.pocty === "object") {
-    for (const k in rec.pocty) { const n = rec.pocty[k]; if (typeof n === "number" && n > 0) p[k] = n; }
+    for (const k in rec.pocty) { const n = rec.pocty[k]; if (typeof n === "number" && n > 0) p[String(k).replace(/_/g, ".")] = n; }
   } else if (rec && typeof rec.count === "number" && rec.count > 0) {
     p["0.5"] = rec.count;
   }
   return p;
 }
+const encPocty = (p) => { const o = {}; for (const k in (p || {})) o[String(k).replace(/\./g, "_")] = p[k]; return o; };
 const celkemKusu = (p) => Object.keys(p || {}).reduce((s, k) => s + (p[k] || 0), 0);
 const litryZ = (p) => Object.keys(p || {}).reduce((s, k) => s + parseFloat(k) * (p[k] || 0), 0);
 const pivaZ = (p) => litryZ(p) / 0.5;   // 1 pivo = 0,5 l (spravedlivé skóre napříč velikostmi)
@@ -276,7 +277,7 @@ async function uloz() {
   try {
     const r = await fetch(urlAkce("/hraci/" + slug(jmeno)), {
       method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: jmeno, count: celkemKusu(mujPocty), pocty: mujPocty, updatedAt: Date.now() })
+      body: JSON.stringify({ name: jmeno, count: celkemKusu(mujPocty), pocty: encPocty(mujPocty), updatedAt: Date.now() })
     });
     if (!r.ok) throw new Error(r.status);
     chyba = "";
@@ -361,7 +362,7 @@ async function ulozNoveJmeno() {
     const celk = celkemKusu(poctyNove);
     await fetch(urlAkce("/hraci/" + novyS), {
       method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: nove, count: celk, pocty: poctyNove, updatedAt: Date.now() })
+      body: JSON.stringify({ name: nove, count: celk, pocty: encPocty(poctyNove), updatedAt: Date.now() })
     });
     if (novyS !== staryS) { try { await fetch(urlAkce("/hraci/" + staryS), { method: "DELETE" }); } catch (e) {} }
     jmeno = nove; jmenoLokalne(nove); mujPocty = poctyNove; mujPocet = celk; chyba = "";
