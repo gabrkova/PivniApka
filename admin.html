@@ -109,6 +109,8 @@ NASTAVENÍ (Firebase konzole, projekt pivni-pocitacka):
     .menu{ position:absolute; right:0; top:40px; z-index:20; background:#2a1c0c; border:1px solid var(--okraj); border-radius:12px; padding:6px; min-width:170px; box-shadow:0 12px 26px rgba(0,0,0,.55); }
     .menu button{ display:block; width:100%; text-align:left; background:transparent; color:var(--pena); padding:9px 10px; border-radius:8px; font-size:14px; border:none; cursor:pointer; }
     .menu button:hover{ background:rgba(255,255,255,.06); }
+    .menu button.smaz{ color:var(--cerv); }
+    .menu button.smaz:hover{ background:rgba(208,112,78,.14); }
     .overlay{ position:fixed; inset:0; z-index:10; background:transparent; }
   </style>
 </head>
@@ -303,6 +305,26 @@ NASTAVENÍ (Firebase konzole, projekt pivni-pocitacka):
     pracuji = false; render();
   }
 
+  async function smazAkci(id) {
+    menuId = null;
+    if (id === aktivniId) {
+      chyba = "Aktuální akci nelze smazat. Nejdřív přepni na jinou akci.";
+      render();
+      return;
+    }
+    const naz = (akce[id] && akce[id].nazev) || id;
+    if (!window.confirm('Opravdu smazat akci „' + naz + '"?\n\nSmažou se všechna její data i historie. Tuto akci nelze vrátit zpět.')) return;
+    pracuji = true; chyba = ""; info = ""; render();
+    try {
+      const t = await token();
+      const r = await fetch(DB + "/pivo/akce/" + id + ".json" + napis(t), { method: "DELETE" });
+      if (!r.ok) throw new Error("smazat " + r.status);
+      info = 'Akce „' + naz + '" byla smazána.';
+      await nactiVse();
+    } catch (e) { chyba = "Smazání se nepovedlo (" + e.message + ")."; }
+    pracuji = false; render();
+  }
+
   async function importuj() {
     if (!legacy) return;
     if (!window.confirm("Importovat dosavadní data (aktuální tabuli + archiv) do nového modelu?\n\nStará data zůstanou beze změny, jen se zkopírují.")) return;
@@ -451,6 +473,7 @@ NASTAVENÍ (Firebase konzole, projekt pivni-pocitacka):
               '<button onclick="otevriNahled(\'' + esc(id) + '\')">Zobrazit</button>' +
               '<button onclick="prejmenuj(\'' + esc(id) + '\')">Přejmenovat</button>' +
               '<button onclick="exportAkce(\'' + esc(id) + '\')">Export CSV</button>' +
+              (jeAkt ? "" : '<button class="smaz" onclick="smazAkci(\'' + esc(id) + '\')">Smazat</button>') +
             "</div>"
           : "";
         return '<div class="akce-radek">' +
